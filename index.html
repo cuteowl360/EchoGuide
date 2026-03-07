@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <title>VisionAssist AI</title>
+    <meta
+      name="description"
+      content="Mobile-first AI assistant for visually impaired users using camera vision and voice."
+    />
+    <link rel="stylesheet" href="/static/style.css" />
+  </head>
+  <body>
+    <main class="app-shell">
+      <header class="topbar">
+        <h1>VisionAssist AI</h1>
+        <p>Artificial eye for the visually impaired.</p>
+      </header>
+
+      <section class="video-card" aria-live="polite">
+        <video id="camera" playsinline autoplay muted></video>
+        <canvas id="captureCanvas"></canvas>
+      </section>
+
+      <section class="controls">
+        <button id="startBtn" class="btn btn-primary">Start Camera</button>
+        <button id="scanSceneBtn" class="btn btn-secondary">Scan Scene</button>
+        <button id="readTextBtn" class="btn btn-secondary">Read Text</button>
+        <button id="rememberPersonBtn" class="btn btn-accent">Remember Person</button>
+        <button id="identifyPersonBtn" class="btn btn-accent">Identify Person</button>
+      </section>
+
+      <section class="status" id="status" aria-live="assertive">
+        Camera is off. Press Start to begin.
+      </section>
+
+      <section class="result-area" aria-live="polite">
+        <h2>Latest Feedback</h2>
+        <p id="answer">No response yet.</p>
+
+        <h2>Detected Objects</h2>
+        <ul id="objects"></ul>
+
+        <h2>Read Text</h2>
+        <p id="ocrText">None</p>
+      </section>
+
+      <audio id="audioPlayer" class="hidden" controls></audio>
+    </main>
+
+    <script src="/static/app.js" defer></script>
+  </body>
+</html>
