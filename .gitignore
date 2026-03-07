@@ -1,0 +1,25 @@
+# Secrets — never commit these
+.env
+.secret_key
+
+# SQLite database files
+users.db
+users.db-shm
+users.db-wal
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+
+# Virtual environments
+venv/
+.venv/
+env/
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.vscode/

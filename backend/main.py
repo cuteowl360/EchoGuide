@@ -28,6 +28,12 @@ from .person_memory import (
     remember_person as remember_person_from_frame,
 )
 from .vision import detect_objects, model_is_available, summarize_objects
+from .navigation import (
+    get_route,
+    geocode_place,
+    filter_obstacles,
+    build_obstacle_announcement,
+)
 from . import auth as _auth
 
 load_dotenv()
@@ -352,4 +358,130 @@ async def speak_legacy(text: str = Form(...)) -> Dict[str, str]:
     return {
         "audio_base64": base64.b64encode(audio_bytes).decode("utf-8"),
         "mime_type": "audio/mpeg",
+    }
+
+
+# ── Navigation endpoints ──────────────────────────────────────────────────────
+
+class _NavRouteRequest(dict):
+    pass
+
+
+from pydantic import BaseModel
+
+class NavRouteRequest(BaseModel):
+    origin_lat: float
+    origin_lon: float
+    dest_lat: float
+    dest_lon: float
+
+
+class NavObstacleRequest(BaseModel):
+    # base64-encoded JPEG/PNG frame from the camera
+    image_b64: str
+    # current step index so the frontend can correlate the reply
+    current_step: int = 0
+
+
+class NavGeocodeRequest(BaseModel):
+    query: str
+    near_lat: float
+    near_lon: float
+
+
+@app.post("/navigate/geocode")
+async def navigate_geocode(req: NavGeocodeRequest) -> Dict[str, Any]:
+    """Geocode a place name to coordinates using ORS (server-side, key stays private)."""
+    if not req.query.strip():
+        raise HTTPException(status_code=400, detail="query is required.")
+    try:
+        result = await asyncio.to_thread(geocode_place, req.query, req.near_lat, req.near_lon)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    except Exception:
+        logger.exception("navigate_geocode failed")
+        raise HTTPException(status_code=500, detail="Geocoding failed.")
+    return {"status": "ok", **result}
+
+
+@app.post("/navigate/route")
+async def navigate_route(req: NavRouteRequest) -> Dict[str, Any]:
+    """
+    Fetch a walking route from Mapbox.
+    Returns ordered steps with spoken instructions and coordinates.
+    """
+    try:
+        route = await asyncio.to_thread(
+            get_route,
+            req.origin_lat, req.origin_lon,
+            req.dest_lat, req.dest_lon,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    except Exception:
+        logger.exception("navigate_route failed")
+        raise HTTPException(status_code=500, detail="Could not fetch route.")
+
+    # Optionally pre-synthesise the first instruction
+    first_text = route["steps"][0]["instruction"] if route["steps"] else "Route ready."
+    audio_b64: Optional[str] = None
+    if tts_is_available():
+        audio_bytes = await asyncio.to_thread(synthesize_speech, first_text)
+        if audio_bytes:
+            audio_b64 = base64.b64encode(audio_bytes).decode("utf-8")
+
+    return {
+        "status": "ok",
+        "route": route,
+        "first_instruction_audio": audio_b64,
+    }
+
+
+@app.post("/navigate/speak_step")
+async def navigate_speak_step(text: str = Form(...)) -> Dict[str, str]:
+    """
+    Convert a navigation instruction string to TTS audio.
+    The frontend calls this whenever the user advances to a new step.
+    """
+    if not text.strip():
+        raise HTTPException(status_code=400, detail="text is required.")
+    if not tts_is_available():
+        raise HTTPException(status_code=503, detail="TTS is not configured.")
+    audio_bytes = await asyncio.to_thread(synthesize_speech, text.strip())
+    if not audio_bytes:
+        raise HTTPException(status_code=500, detail="No audio returned.")
+    return {
+        "audio_base64": base64.b64encode(audio_bytes).decode("utf-8"),
+        "mime_type": "audio/mpeg",
+    }
+
+
+@app.post("/navigate/scan_obstacles")
+async def navigate_scan_obstacles(req: NavObstacleRequest) -> Dict[str, Any]:
+    """
+    Accept a base64 camera frame, run YOLO, return obstacle announcement + audio.
+    Called by the frontend on a timer (e.g. every 3 seconds) while navigating.
+    """
+    try:
+        img_bytes = base64.b64decode(req.image_b64)
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid base64 image.")
+
+    frame = _decode_frame(img_bytes)
+    detections = await asyncio.to_thread(detect_objects, frame)
+    obstacles = filter_obstacles(detections)
+    announcement = build_obstacle_announcement(obstacles)
+
+    audio_b64: Optional[str] = None
+    if announcement and tts_is_available():
+        audio_bytes = await asyncio.to_thread(synthesize_speech, announcement)
+        if audio_bytes:
+            audio_b64 = base64.b64encode(audio_bytes).decode("utf-8")
+
+    return {
+        "status": "ok",
+        "current_step": req.current_step,
+        "obstacles": obstacles,
+        "announcement": announcement,
+        "audio_base64": audio_b64,
     }

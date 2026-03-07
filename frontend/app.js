@@ -7,6 +7,13 @@ const scanSceneBtn = document.getElementById("scanSceneBtn");
 const readTextBtn = document.getElementById("readTextBtn");
 const rememberPersonBtn = document.getElementById("rememberPersonBtn");
 const identifyPersonBtn = document.getElementById("identifyPersonBtn");
+const navigateBtn       = document.getElementById("navigateBtn");
+const navPanel          = document.getElementById("navPanel");
+const navDestInput      = document.getElementById("navDestInput");
+const navGoBtn          = document.getElementById("navGoBtn");
+const navStopBtn        = document.getElementById("navStopBtn");
+const navStatusEl       = document.getElementById("navStatus");
+const navInstructionEl  = document.getElementById("navInstruction");
 const statusEl = document.getElementById("status");
 const statusDot = document.getElementById("statusDot");
 const answerEl = document.getElementById("answer");
@@ -298,6 +305,33 @@ identifyPersonBtn.addEventListener("click", async () => {
   } catch (error) {
     setStatus(error?.message || "Unable to identify person.");
   }
+});
+
+// ── Navigation ────────────────────────────────────────────────────────────────
+navigateBtn.addEventListener("click", () => {
+  navPanel.classList.toggle("hidden");
+  if (!navPanel.classList.contains("hidden")) {
+    navDestInput.focus();
+    nav.init(video, canvas, (msg) => {
+      navStatusEl.textContent = msg;
+      navInstructionEl.textContent = msg;
+    });
+  }
+});
+
+navGoBtn.addEventListener("click", () => {
+  const dest = navDestInput.value.trim();
+  if (!dest) { navStatusEl.textContent = "Please enter a destination."; return; }
+  nav.startNavigation(dest);
+});
+
+navDestInput.addEventListener("keydown", (e) => {
+  if (e.key === "Enter") navGoBtn.click();
+});
+
+navStopBtn.addEventListener("click", () => {
+  nav.stop();
+  navInstructionEl.textContent = "—";
 });
 
 window.addEventListener("load", () => {

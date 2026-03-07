@@ -60,6 +60,10 @@
           <span class="btn-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg></span>
           <span class="btn-label">Identify</span>
         </button>
+        <button id="navigateBtn" class="btn btn-navigate">
+          <span class="btn-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polygon points="3,11 22,2 13,21 11,13"/></svg></span>
+          <span class="btn-label">Navigate</span>
+        </button>
       </section>
 
       <!-- Status -->
@@ -88,8 +92,30 @@
 
       <audio id="audioPlayer" class="hidden" controls></audio>
 
+      <!-- Navigation panel (shown when Navigate is active) -->
+      <section class="result-panel glass nav-panel hidden" id="navPanel" aria-live="polite">
+        <div class="result-section">
+          <span class="result-label">Navigation</span>
+          <div class="nav-input-row">
+            <input id="navDestInput" type="text" placeholder="Where do you want to go?" autocomplete="off" />
+            <button id="navGoBtn" class="btn btn-start nav-go-btn">Go</button>
+          </div>
+          <p class="result-value" id="navStatus">Say or type your destination.</p>
+        </div>
+        <div class="divider"></div>
+        <div class="result-section">
+          <span class="result-label">Current Instruction</span>
+          <p class="result-value answer" id="navInstruction">—</p>
+        </div>
+        <div class="divider"></div>
+        <div class="result-section nav-stop-row">
+          <button id="navStopBtn" class="btn btn-navigate nav-stop-btn">Stop Navigation</button>
+        </div>
+      </section>
+
     </main>
 
+    <script src="/static/navigation.js" defer></script>
     <script src="/static/app.js" defer></script>
     <script>
       (async function () {
