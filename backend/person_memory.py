@@ -17,10 +17,18 @@ try:
 except Exception:  # pragma: no cover - optional dependency
     face_recognition = None
 
+# Tracks the most recently identified person so "repeat their name" works
+_last_recognized_name: Optional[str] = None
+
 
 def face_lib_available() -> bool:
     """Whether face recognition dependencies are available."""
     return face_recognition is not None
+
+
+def get_last_recognized() -> Optional[str]:
+    """Return the name of the most recently identified person, or None."""
+    return _last_recognized_name
 
 
 def _largest_face(encodings_with_boxes: List[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
@@ -43,8 +51,8 @@ def extract_face_encodings(frame_bgr: np.ndarray) -> List[Dict[str, Any]]:
 
     try:
         rgb = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2RGB)
-        boxes = face_recognition.face_locations(rgb)
-        encodings = face_recognition.face_encodings(rgb, boxes)
+        boxes = face_recognition.face_locations(rgb, model="hog")
+        encodings = face_recognition.face_encodings(rgb, boxes, num_jitters=1)
     except Exception:
         logger.exception("Face detection/encoding failed.")
         return []
@@ -72,36 +80,39 @@ def remember_person(frame_bgr: np.ndarray, name: str) -> Dict[str, Any]:
         raise ValueError("Name is required.")
     faces = extract_face_encodings(frame_bgr)
     if not faces:
-        raise RuntimeError("No face detected.")
+        raise RuntimeError("No face detected in the image.")
 
     best = _largest_face(faces)
     if not best:
-        raise RuntimeError("No face detected.")
+        raise RuntimeError("No face detected in the image.")
 
-    stored = upsert_person(name, best["encoding"])
+    stored = upsert_person(name.strip(), best["encoding"])
     return {
         "name": stored["name"],
-        "message": f"Stored face for {stored['name']}.",
+        "message": f"OK, I will remember this person as {stored['name']}.",
     }
 
 
-def identify_person(frame_bgr: np.ndarray, tolerance: float = 0.45) -> Dict[str, Any]:
-    """Find the best match from stored people."""
+def identify_person(frame_bgr: np.ndarray, tolerance: float = 0.55) -> Dict[str, Any]:
+    """Find the best matching stored person for the largest face in frame."""
+    global _last_recognized_name
+
     faces = extract_face_encodings(frame_bgr)
     if not faces:
-        return {"name": None, "text": "I could not detect anyone."}
+        return {"name": None, "text": "I could not detect a face."}
 
     best = _largest_face(faces)
     if not best:
-        return {"name": None, "text": "I could not detect anyone."}
+        return {"name": None, "text": "I could not detect a face."}
 
     match = find_match(best["encoding"], tolerance=tolerance)
     if not match:
-        return {"name": None, "text": "I can not recognize this person."}
+        return {"name": None, "text": "I don't know this person."}
 
     name, confidence = match
+    _last_recognized_name = name
     return {
         "name": name,
         "confidence": confidence,
-        "text": f"This is {name}.",
+        "text": name,
     }

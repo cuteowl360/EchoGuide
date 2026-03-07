@@ -507,6 +507,21 @@ function handleVoiceCommand(type, params) {
       if (guideMode.active) guideMode.stop();
       break;
 
+    case "repeat_name":
+      setStatus("Echo: repeating last identified person…");
+      (async () => {
+        try {
+          const res = await fetch(`${API_BASE}/last_person`);
+          const data = await res.json();
+          const text = data.text || "I haven't identified anyone yet.";
+          setStatus(`Last person: ${data.name || "unknown"}`);
+          await speakText(text);
+        } catch (_) {
+          speakFallback("I haven't identified anyone yet.");
+        }
+      })();
+      break;
+
     case "help":
       setStatus("Echo: showing voice command help.");
       speakFallback(

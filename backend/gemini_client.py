@@ -174,6 +174,7 @@ Intents:
 - read_text         → user wants to read text, signs, labels, menus, or documents
 - identify_person   → user wants to know who is in front of them
 - remember_person   → user wants to save/remember a face. Extract "name" into params: {{"name": "..."}}
+- repeat_name       → user wants to hear the name of the last identified person again ("repeat their name", "what did you call them", "say their name again")
 - navigate          → user wants directions / to go somewhere. Extract "destination" into params: {{"destination": "..."}}
 - stop_navigation   → user wants to cancel / stop navigation
 - start_camera      → user wants to turn on / open the camera
@@ -190,8 +191,13 @@ Examples:
 "tell me what this says" → {{"intent":"read_text","params":{{}}}}
 "who is this person" → {{"intent":"identify_person","params":{{}}}}
 "face in front of me, who is it" → {{"intent":"identify_person","params":{{}}}}
+"do you know them" → {{"intent":"identify_person","params":{{}}}}
 "save this as mom" → {{"intent":"remember_person","params":{{"name":"mom"}}}}
+"remember this person as Alice" → {{"intent":"remember_person","params":{{"name":"Alice"}}}}
 "learn this person, call them David" → {{"intent":"remember_person","params":{{"name":"David"}}}}
+"repeat their name" → {{"intent":"repeat_name","params":{{}}}}
+"what did you call them" → {{"intent":"repeat_name","params":{{}}}}
+"say their name again" → {{"intent":"repeat_name","params":{{}}}}
 "take me to the nearest starbucks" → {{"intent":"navigate","params":{{"destination":"starbucks"}}}}
 "how do i get to cvs pharmacy" → {{"intent":"navigate","params":{{"destination":"cvs pharmacy"}}}}
 "i need to go to the hospital" → {{"intent":"navigate","params":{{"destination":"hospital"}}}}

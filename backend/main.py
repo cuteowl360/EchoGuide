@@ -23,6 +23,7 @@ from .gemini_client import describe_scene, interpret_voice, guide_scan_frame, is
 from .ocr import ocr_is_available, recognize_text
 from .person_memory import (
     face_lib_available,
+    get_last_recognized,
     identify_person as identify_person_from_frame,
     remember_person as remember_person_from_frame,
 )
@@ -355,7 +356,7 @@ async def identify_person(image: UploadFile = File(...)) -> Dict[str, Any]:
 
     try:
         result = await asyncio.to_thread(identify_person_from_frame, frame)
-        text = result.get("text") or "I could not detect anyone."
+        text = result.get("text") or "I don't know this person."
         return {
             "status": "ok",
             "mode": "identify_person",
@@ -366,6 +367,15 @@ async def identify_person(image: UploadFile = File(...)) -> Dict[str, Any]:
     except Exception:
         logger.exception("identify_person failed")
         raise HTTPException(status_code=500, detail="Unable to identify person.")
+
+
+@app.get("/last_person")
+async def last_person() -> Dict[str, Any]:
+    """Return the name of the most recently identified person."""
+    name = get_last_recognized()
+    if name:
+        return {"status": "ok", "name": name, "text": name}
+    return {"status": "ok", "name": None, "text": "I haven't identified anyone yet."}
 
 
 # Backward-compatible endpoints for earlier frontends.

@@ -203,8 +203,10 @@ class VoiceCommander {
       return { intent: "scan_scene", params: {} };
     if (/\b(read|text|sign|written|label)\b/.test(phrase))
       return { intent: "read_text", params: {} };
-    if (/\b(who|identify|face|person)\b/.test(phrase))
+    if (/\b(who|identify|face|person|do you know)\b/.test(phrase))
       return { intent: "identify_person", params: {} };
+    if (/\b(repeat|their name|what.*call|name again)\b/.test(phrase))
+      return { intent: "repeat_name", params: {} };
     if (/\b(stop|end|cancel)\b/.test(phrase))
       return { intent: "stop_navigation", params: {} };
     if (/\b(help|assist|commands)\b/.test(phrase))
@@ -233,11 +235,15 @@ class VoiceCommander {
       return { intent: "read_text", params: {} };
 
     // Identify person / face
-    if (/\b(identify|who.*is|recogni[sz]e|face|person|people)\b/.test(cmd))
+    if (/\b(identify|who.*is|do you know them|recogni[sz]e|face|person|people)\b/.test(cmd))
       return { intent: "identify_person", params: {} };
 
-    // Remember / save person
-    const rememberMatch = cmd.match(/\b(?:remember|save|learn|add)\b.*\bnamed?\s+([\w\s]+)/);
+    // Repeat / echo last recognized name
+    if (/\b(repeat|what.*call|their name|his name|her name|say.*name again|name again)\b/.test(cmd))
+      return { intent: "repeat_name", params: {} };
+
+    // Remember / save person — handles "as [name]" and "named [name]" patterns
+    const rememberMatch = cmd.match(/\b(?:remember|save|learn|add|store)\b.*?\b(?:as|named?|call(?:ed)?)\s+([\w][\w\s]{0,30}?)\s*$/);
     if (rememberMatch)
       return { intent: "remember_person", params: { name: rememberMatch[1].trim() } };
 

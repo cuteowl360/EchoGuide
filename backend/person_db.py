@@ -73,26 +73,43 @@ def save_people_db(people: Sequence[Dict[str, Any]]) -> None:
 
 
 def upsert_person(name: str, encoding: Sequence[float] | np.ndarray) -> Dict[str, Any]:
-    """Store or replace a person by name."""
+    """Store or update a person by name.
+    
+    Up to 5 sample encodings are kept per person and averaged for matching,
+    which improves accuracy across different lighting and head angles.
+    """
     people = load_people_db()
-    normalized = {
-        "name": str(name).strip(),
-        "face_encoding": np.asarray(encoding, dtype=float).flatten().tolist(),
-    }
-    if not normalized["name"]:
+    normalized_name = str(name).strip()
+    if not normalized_name:
         raise ValueError("Person name cannot be empty.")
 
-    replaced = False
-    for person in people:
-        if str(person.get("name", "")).strip().lower() == normalized["name"].lower():
-            person["face_encoding"] = normalized["face_encoding"]
-            replaced = True
-            break
-    if not replaced:
-        people.append(normalized)
+    new_enc = np.asarray(encoding, dtype=float).flatten().tolist()
+
+    existing = next(
+        (p for p in people if str(p.get("name", "")).strip().lower() == normalized_name.lower()),
+        None,
+    )
+
+    MAX_SAMPLES = 5
+    if existing is not None:
+        # Accumulate samples; keep the most recent MAX_SAMPLES
+        samples = existing.get("samples", [existing.get("face_encoding", [])])
+        samples = [s for s in samples if isinstance(s, list) and s]
+        samples.append(new_enc)
+        if len(samples) > MAX_SAMPLES:
+            samples = samples[-MAX_SAMPLES:]
+        existing["samples"] = samples
+        # Averaged encoding for fast lookup
+        existing["face_encoding"] = np.mean(np.array(samples), axis=0).tolist()
+    else:
+        people.append({
+            "name": normalized_name,
+            "face_encoding": new_enc,
+            "samples": [new_enc],
+        })
 
     save_people_db(people)
-    return normalized
+    return {"name": normalized_name, "face_encoding": new_enc}
 
 
 def find_match(
