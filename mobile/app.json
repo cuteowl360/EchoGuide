@@ -1,0 +1,41 @@
+{
+  "expo": {
+    "name": "EchoGuide",
+    "slug": "echoguide",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "dark",
+    "splash": {
+      "image": "./assets/splash.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#060a12"
+    },
+    "ios": {
+      "supportsTablet": false,
+      "bundleIdentifier": "com.echoguide.app",
+      "infoPlist": {
+        "NSCameraUsageDescription": "EchoGuide uses the camera to identify objects, read text, and recognise faces.",
+        "NSMicrophoneUsageDescription": "EchoGuide uses the microphone for voice commands.",
+        "NSSpeechRecognitionUsageDescription": "EchoGuide uses speech recognition for voice commands."
+      }
+    },
+    "android": {
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/adaptive-icon.png",
+        "backgroundColor": "#060a12"
+      },
+      "package": "com.echoguide.app",
+      "permissions": [
+        "android.permission.CAMERA",
+        "android.permission.RECORD_AUDIO"
+      ]
+    },
+    "plugins": [
+      ["expo-camera", { "cameraPermission": "EchoGuide needs the camera." }]
+    ],
+    "extra": {
+      "eas": { "projectId": "your-eas-project-id" }
+    }
+  }
+}

@@ -19,7 +19,7 @@ from pathlib import Path
 from threading import Lock
 from typing import Any, Dict, Optional
 
-from fastapi import APIRouter, Cookie, Depends, HTTPException, Response
+from fastapi import APIRouter, Cookie, Depends, Header, HTTPException, Request, Response
 from pydantic import BaseModel, Field
 
 logger = logging.getLogger(__name__)
@@ -169,14 +169,33 @@ class LoginIn(BaseModel):
 
 # ── FastAPI dependency ────────────────────────────────────────────────────────
 
-def get_current_user(eg_session: Optional[str] = Cookie(None)) -> Dict[str, Any]:
-    """Dependency that validates the session cookie and returns the token payload."""
-    if not eg_session:
-        raise HTTPException(status_code=401, detail="Not authenticated.")
-    return _verify_token(eg_session)
+def get_current_user(
+    eg_session: Optional[str] = Cookie(None),
+    authorization: Optional[str] = Header(None),
+) -> Dict[str, Any]:
+    """Validate the session cookie OR a Bearer token from the Authorization header.
+
+    Mobile clients (React Native) pass their JWT as:
+        Authorization: Bearer <token>
+    Web clients use the HttpOnly cookie set at login.
+    """
+    # Prefer explicit Bearer token (mobile / API clients)
+    if authorization:
+        scheme, _, token = authorization.partition(" ")
+        if scheme.lower() == "bearer" and token:
+            return _verify_token(token)
+    # Fall back to cookie session (web)
+    if eg_session:
+        return _verify_token(eg_session)
+    raise HTTPException(status_code=401, detail="Not authenticated.")
 
 
 # ── cookie helper ─────────────────────────────────────────────────────────────
+
+def _is_secure_context() -> bool:
+    """Returns True when running behind HTTPS (set HTTPS_ONLY=1 in prod)."""
+    return os.getenv("HTTPS_ONLY", "0") == "1"
+
 
 def _set_session_cookie(response: Response, token: str) -> None:
     response.set_cookie(
@@ -184,9 +203,9 @@ def _set_session_cookie(response: Response, token: str) -> None:
         value=token,
         max_age=TOKEN_EXPIRY_SECONDS,
         path="/",
-        httponly=True,   # not accessible from JavaScript (XSS protection)
-        samesite="lax",  # CSRF protection for same-site navigation
-        secure=False,    # set to True when deploying behind HTTPS
+        httponly=True,
+        samesite="lax",
+        secure=_is_secure_context(),
     )
 
 
@@ -251,3 +270,22 @@ def logout(response: Response) -> Dict[str, str]:
 def me(current_user: Dict[str, Any] = Depends(get_current_user)) -> Dict[str, Any]:
     """Return the currently authenticated user's info."""
     return {"user_id": current_user["sub"], "username": current_user["username"]}
+
+
+@router.post("/token")
+def get_token(body: LoginIn) -> Dict[str, Any]:
+    """Return a raw JWT for mobile / API clients that cannot use cookies.
+
+    POST /auth/token  {"username": "...", "password": "..."}
+    Response:          {"token": "<jwt>", "username": "...", "expires_in": 604800}
+    """
+    with _DB_LOCK, _get_conn() as conn:
+        row = conn.execute(
+            "SELECT id, username, pw_hash FROM users WHERE username = ?", (body.username,)
+        ).fetchone()
+    stored_hash = row["pw_hash"] if row else _hash_password("__dummy__")
+    password_ok = _verify_password(body.password, stored_hash)
+    if row is None or not password_ok:
+        raise HTTPException(status_code=401, detail="Invalid username or password.")
+    token = _create_token(row["id"], row["username"])
+    return {"token": token, "username": row["username"], "expires_in": TOKEN_EXPIRY_SECONDS}
