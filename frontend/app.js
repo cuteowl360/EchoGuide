@@ -343,75 +343,91 @@ navStopBtn.addEventListener("click", () => {
 const voicePill  = document.getElementById("voicePill");
 const voiceLabel = document.getElementById("voiceLabel");
 
+// Helper: ensure camera is on, then run a callback
+async function _withCamera(action) {
+  if (!stream) {
+    setStatus("Starting camera for you…", "working");
+    speakFallback("Starting camera.");
+    try { await startCamera(); } catch (_) {}
+    // Small delay so the camera frame is ready
+    await new Promise(r => setTimeout(r, 800));
+  }
+  action();
+}
+
 function handleVoiceCommand(type, params) {
   switch (type) {
     case "start_camera":
+      setStatus("Starting camera…", "working");
       speakFallback("Starting camera.");
       if (!stream) startCamera();
       break;
 
     case "stop_camera":
+      setStatus("Stopping camera.");
       speakFallback("Stopping camera.");
       stopCamera();
       break;
 
     case "scan_scene":
-      if (!stream) { speakFallback("Please start the camera first."); return; }
+      setStatus("Echo: scanning the scene…", "working");
       speakFallback("Scanning.");
-      resetResultPanels();
-      handleScanScene();
+      _withCamera(() => { resetResultPanels(); handleScanScene(); });
       break;
 
     case "read_text":
-      if (!stream) { speakFallback("Please start the camera first."); return; }
+      setStatus("Echo: reading text…", "working");
       speakFallback("Reading text.");
-      resetResultPanels();
-      handleReadText();
+      _withCamera(() => { resetResultPanels(); handleReadText(); });
       break;
 
     case "identify_person":
-      if (!stream) { speakFallback("Please start the camera first."); return; }
+      setStatus("Echo: identifying person…", "working");
       speakFallback("Identifying person.");
-      resetResultPanels();
-      handleIdentifyPerson();
+      _withCamera(() => { resetResultPanels(); handleIdentifyPerson(); });
       break;
 
     case "remember_person": {
-      if (!stream) { speakFallback("Please start the camera first."); return; }
+      setStatus(`Echo: saving face as ${params.name}…`, "working");
       speakFallback(`Saving ${params.name}.`);
-      (async () => {
-        try {
-          const blob = await captureFrameBlob();
-          const form = new FormData();
-          form.append("image", blob, "person.jpg");
-          form.append("name", params.name);
-          await runAction("/remember_person", form);
-        } catch (e) {
-          speakFallback("Could not save person.");
-        }
-      })();
+      _withCamera(() => {
+        (async () => {
+          try {
+            const blob = await captureFrameBlob();
+            const form = new FormData();
+            form.append("image", blob, "person.jpg");
+            form.append("name", params.name);
+            await runAction("/remember_person", form);
+          } catch (e) {
+            speakFallback("Could not save person.");
+          }
+        })();
+      });
       break;
     }
 
     case "ask_for_name":
+      setStatus("Listening for name — say the person's name now…");
       speakFallback("Please say the person's name.");
-      setStatus("Listening for name…");
       break;
 
     case "navigate": {
-      speakFallback(`Searching for ${params.destination}.`);
+      const dest = params.destination || "";
+      setStatus(`Echo: navigating to ${dest}…`);
+      speakFallback(`Searching for ${dest}.`);
       navPanel.classList.remove("hidden");
-      navDestInput.value = params.destination;
+      navDestInput.value = dest;
       nav.init(video, canvas,
         (msg)   => { navStatusEl.textContent = msg; },
         (instr) => { navInstructionEl.textContent = instr || "—"; }
       );
       const candidatesEl = document.getElementById("navCandidates");
-      nav.search(params.destination, candidatesEl);
+      nav.search(dest, candidatesEl);
       break;
     }
 
     case "stop_navigation": {
+      setStatus("Navigation stopped.");
       speakFallback("Navigation stopped.");
       nav.stop();
       navInstructionEl.textContent = "—";
@@ -421,6 +437,7 @@ function handleVoiceCommand(type, params) {
     }
 
     case "help":
+      setStatus("Echo: showing voice command help.");
       speakFallback(
         "Voice commands: " +
         "Say Echo describe to scan what you see. " +
@@ -434,6 +451,7 @@ function handleVoiceCommand(type, params) {
       break;
 
     case "unknown":
+      setStatus(`Echo heard you but didn't understand. Try: "Echo scan", "Echo read", "Echo help".`);
       speakFallback(`Sorry, I didn't understand. Say Echo help to hear available commands.`);
       break;
   }
@@ -462,7 +480,13 @@ function _startVoice() {
       voiceLabel.textContent = "Voice off";
     }
   }, (transcript) => {
-    setStatus(`Heard: "${transcript}"`);
+    // Show whether echo was detected so the user gets immediate visual feedback
+    const hasEcho = transcript.includes("echo") || transcript.includes("eco") || transcript.includes("ecco");
+    if (hasEcho) {
+      setStatus(`Echo detected: "${transcript}"`);
+    } else {
+      setStatus(`Heard: "${transcript}" — say Echo first`);
+    }
   });
   if (ok) {
     _voiceStarted = true;
