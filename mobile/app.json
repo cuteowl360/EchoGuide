@@ -32,10 +32,16 @@
       ]
     },
     "plugins": [
-      ["expo-camera", { "cameraPermission": "EchoGuide needs the camera." }]
+      [
+        "expo-camera",
+        {
+          "cameraPermission": "EchoGuide needs the camera."
+        }
+      ],
+      "expo-asset"
     ],
-    "extra": {
-      "eas": { "projectId": "your-eas-project-id" }
+    "updates": {
+      "enabled": false
     }
   }
 }

@@ -9,14 +9,12 @@ import os
 from typing import Any, Dict, List, Sequence
 
 try:
-    import google.generativeai as genai
-except Exception:  # pragma: no cover - optional dependency
-    genai = None
-
-try:
     from google import genai as genai_new
 except Exception:  # pragma: no cover - optional dependency
     genai_new = None
+
+# Legacy alias kept for is_available() check only
+genai = None
 
 from .vision import summarize_objects
 
@@ -100,7 +98,7 @@ def _fallback_description(detections: Sequence[Dict[str, Any]], ocr_result: Dict
 
 def is_available() -> bool:
     """Return True when Gemini key/package is configured."""
-    return bool(os.getenv("GEMINI_API_KEY")) and genai is not None
+    return bool(os.getenv("GEMINI_API_KEY")) and genai_new is not None
 
 
 async def describe_scene(
@@ -113,7 +111,7 @@ async def describe_scene(
     """
     Return a Gemini description for the given frame and context.
     """
-    if genai is None:
+    if genai_new is None:
         return (
             f"{ERROR_RESPONSE_BASE} OCR text detected: {ocr_result.get('text', '') or 'none'}."
         )
@@ -139,16 +137,18 @@ async def describe_scene(
         model_name = os.getenv("GEMINI_MODEL", "gemini-2.0-flash")
 
         def _call() -> str:
-            genai.configure(api_key=api_key)
-            model = genai.GenerativeModel(model_name)
-            response = model.generate_content(
-                [
-                    prompt,
-                    {"mime_type": "image/jpeg", "data": payload},
-                ],
-                generation_config={"max_output_tokens": 512},
+            client = genai_new.Client(api_key=api_key)
+            response = client.models.generate_content(
+                model=model_name,
+                contents=[{
+                    "parts": [
+                        {"text": prompt},
+                        {"inline_data": {"mime_type": "image/jpeg", "data": payload}},
+                    ]
+                }],
+                config={"max_output_tokens": 512},
             )
-            return getattr(response, "text", "").strip()
+            return (response.text or "").strip()
 
         text = await asyncio.to_thread(_call)
         return text or _fallback_description(detections, ocr_result)
@@ -237,15 +237,6 @@ async def interpret_voice(phrase: str) -> dict:
                 config={"max_output_tokens": 128, "temperature": 0.1},
             )
             return (response.text or "").strip()
-    elif genai is not None:
-        def _call() -> str:
-            genai.configure(api_key=api_key)
-            model = genai.GenerativeModel(model_name)
-            response = model.generate_content(
-                prompt,
-                generation_config={"max_output_tokens": 128, "temperature": 0.1},
-            )
-            return getattr(response, "text", "").strip()
     else:
         print("[interpret_voice] No Gemini SDK available")
         return {"intent": "unknown", "params": {}}
@@ -347,15 +338,6 @@ async def guide_scan_frame(
                 config={"max_output_tokens": 80, "temperature": 0.1},
             )
             return (response.text or "").strip()
-    elif genai is not None:
-        def _call() -> str:
-            genai.configure(api_key=api_key)
-            model = genai.GenerativeModel(model_name)
-            response = model.generate_content(
-                [prompt, {"mime_type": "image/jpeg", "data": img_b64}],
-                generation_config={"max_output_tokens": 80, "temperature": 0.1},
-            )
-            return getattr(response, "text", "").strip()
     else:
         return {"guidance": "Gemini SDK not available.", "is_danger": False}
 
