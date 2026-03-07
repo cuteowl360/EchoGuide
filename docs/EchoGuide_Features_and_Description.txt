@@ -1,0 +1,131 @@
+EchoGuide - Detailed Features and Project Description
+
+Project Type:
+Browser-based AI vision assistant for visually impaired users
+
+Primary Stack:
+FastAPI backend + JavaScript frontend + computer vision + speech interfaces
+
+1. Project Overview
+EchoGuide is a real-time assistive web application that helps users understand their environment using camera input, object detection, OCR, scene description AI, person memory, voice commands, and navigation support. The system is designed for mobile and browser usage and can run as a PWA-style experience.
+
+2. High-Level Architecture
+Frontend (User Device)
+- Camera capture and live video feed.
+- Action controls: scan scene, read text, remember person, identify person, navigate, guide mode.
+- Wake-word voice command processing using browser speech recognition.
+- Guide Mode speech output via browser SpeechSynthesis (device speakers).
+- PWA assets and service worker registration.
+
+Backend (FastAPI)
+- Image ingestion, object detection, OCR, and Gemini-based scene/intent processing.
+- Authentication and session management.
+- Navigation geocoding and routing through OpenRouteService APIs.
+- Server-side TTS for non-guide flows via ElevenLabs (with frontend fallback).
+- Guide Mode decision engine (distance + direction + one-time/danger-zone messaging).
+
+3. Core Functional Features
+3.1 Camera and Capture Workflow
+- Starts/stops camera stream with rear camera preference (facingMode: environment).
+- Performs secure-context checks (HTTPS/localhost requirement for media access).
+- Shows user-friendly error states for denied permissions, busy camera, and insecure context.
+
+3.2 Scene Understanding
+- /scan_scene and /analyze_scene process uploaded frames.
+- Pipeline combines object detection, OCR text extraction, and LLM scene description.
+- Returns natural-language response plus structured object and OCR data.
+
+3.3 OCR (Read Text)
+- /read_text extracts visible text from camera frames.
+- Provides explicit fallback message if no readable text is detected.
+
+3.4 Person Memory and Identification
+- /remember_person stores a person by capturing the largest visible face encoding.
+- /identify_person compares current face encoding against saved embeddings.
+- /last_person returns the most recently recognized person for "repeat name" voice command.
+
+3.5 Voice Command System
+- Wake word variants supported: "echo", "hey echo", "ok echo", "eco", "ecco".
+- Instant regex intent matching for fast common commands.
+- Fallback to backend intent interpretation through Gemini via /voice/interpret.
+- Supports commands for camera control, scan, OCR, identify, remember, navigate, guide mode, and help.
+
+3.6 Navigation Assistant
+- Destination search via /navigate/geocode (OpenRouteService autocomplete/search).
+- Walking route creation via /navigate/route with step-wise instructions.
+- Live geolocation tracking advances instructions when waypoint proximity threshold is reached.
+- Periodic obstacle scan during navigation via /navigate/scan_obstacles.
+- Instruction speech via ElevenLabs (/navigate/speak_step) with browser speech fallback.
+
+3.7 Guide Mode (Obstacle Distance Guidance)
+- Real-time scan loop posts frames to /guide/scan every 2 seconds.
+- Distance estimation from bounding box width:
+  distance = (real_object_width * focal_length) / bbox_width
+  with constants: real object width = 0.5 m, focal length = 600.
+- Direction zones based on object center X: left, center, right.
+- Initial guidance is emitted once per obstacle signature.
+- Danger-zone warning is emitted once when entering < 1.0 m threshold.
+- State resets when obstacle is lost or changes, enabling next-obstacle guidance.
+- Speech playback is on user device via Web Speech API in frontend (no backend audio playback for guide speech).
+
+4. Authentication and Session Management
+- Account registration and login backed by SQLite users.db.
+- Password hashing: PBKDF2-SHA256 with per-password salt and 260,000 iterations.
+- Session token: HS256 JWT-like token generated with stdlib HMAC.
+- Session stored in HTTP-only cookie (eg_session) with SameSite=Lax.
+- Protected session check endpoint: /auth/me.
+
+5. API Surface Summary
+- GET /health: service and feature availability flags.
+- POST /scan_scene: scene analysis for wearable/main flow.
+- POST /analyze_scene: rich analysis with optional history/question.
+- POST /read_text: OCR extraction from image frame.
+- POST /remember_person: store named face embedding.
+- POST /identify_person: recognize known person from frame.
+- GET /last_person: get last recognized name.
+- POST /voice_response: text-to-speech audio stream.
+- POST /voice/interpret: natural-language command intent parsing.
+- POST /navigate/geocode: destination candidate search.
+- POST /navigate/route: walking route with steps.
+- POST /navigate/speak_step: TTS for navigation instruction.
+- POST /navigate/scan_obstacles: obstacle warning scan in navigation mode.
+- POST /guide/scan: guide mode obstacle distance/direction message.
+- POST /auth/register: create account.
+- POST /auth/login: login and set session cookie.
+- POST /auth/logout: clear session.
+- GET /auth/me: get authenticated user info.
+
+6. Frontend UX Features
+- Single-screen dashboard with live camera feed and action controls.
+- Guide Mode panel with current guidance, danger banner, and session log.
+- Navigation panel with destination search and live instruction updates.
+- Auth pages for sign in and registration.
+- Startup overlay for first user gesture (camera/mic permission flow).
+- Service worker registration and web manifest for installable/PWA behavior.
+
+7. Technology Stack
+- Backend: FastAPI, Uvicorn, Python.
+- Vision: OpenCV, NumPy, Ultralytics YOLO, AWS Rekognition fallback path.
+- OCR: EasyOCR and Tesseract support.
+- Face Recognition: face_recognition library.
+- LLM: Google Gemini (scene understanding and intent interpretation).
+- TTS: ElevenLabs on backend for general speech, Web Speech API fallback/client speech.
+- Routing/Geocoding: OpenRouteService APIs.
+- Storage: SQLite for auth, local person embeddings storage module.
+
+8. Runtime Configuration
+- ELEVENLABS_API_KEY: enables backend TTS voice synthesis.
+- ORS_API_KEY: required for navigation geocoding/routing.
+- GEMINI_API_KEY: optional but recommended for AI interpretation and scene language quality.
+- GUIDE_ENGINE: controls guide detection backend (aws or yolo).
+- ALLOWED_ORIGINS: CORS policy configuration.
+- JWT_SECRET: auth token signing secret.
+
+9. Production Notes
+- Camera and microphone require HTTPS in production mobile browsers.
+- Guide Mode speech is intentionally browser-side for headless backend compatibility.
+- Server-side TTS endpoints still exist for other workflows (scene/navigation speech streaming).
+- Current auth cookie is set with secure=false; set secure=true for strict HTTPS-only cookie transport in production.
+
+10. What This Project Delivers
+EchoGuide delivers an integrated assistive system that combines perception (vision + OCR), memory (person recognition), mobility support (navigation + obstacle scanning), and conversational interaction (wake-word voice commanding), packaged as a deployable web application usable from desktop and mobile browsers.
