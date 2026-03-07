@@ -19,6 +19,7 @@ except Exception:  # pragma: no cover - optional dependency
     genai_new = None
 
 from .vision import summarize_objects
+from .navigation import filter_obstacles
 
 DEFAULT_SCENE_PROMPT = "Describe this image clearly for a visually impaired user."
 ERROR_RESPONSE_BASE = (
@@ -267,7 +268,7 @@ Priority rules (apply the FIRST matching rule):
 2. Stairs going down / ledge / drop → {"guidance": "STEP DOWN — stairs ahead", "is_danger": true}
 3. Large obstacle blocking path → {"guidance": "MOVE LEFT — obstacle" or "MOVE RIGHT — obstacle", "is_danger": true}
 4. Red traffic light / signal → {"guidance": "STOP — red light", "is_danger": true}
-5. Clear path ahead → {"guidance": "Path clear, continue forward", "is_danger": false}
+5. Clear path ahead → {"guidance": "You can walk ahead. Continue forward.", "is_danger": false}
 6. Crosswalk / intersection → {"guidance": "Crosswalk ahead, wait for signal", "is_danger": false}
 7. Door / entrance → {"guidance": "Door ahead on your left", "is_danger": false}
 8. Narrow passage → {"guidance": "Narrow path, slow down", "is_danger": false}
@@ -275,14 +276,112 @@ Priority rules (apply the FIRST matching rule):
 Respond ONLY with a JSON object. No markdown, no explanation."""
 
 
-async def guide_scan_frame(frame_bgr) -> Dict[str, Any]:
+def _label_for(item: Dict[str, Any]) -> str:
+    return str(item.get("label", "")).lower()
+
+
+def _bbox_from_item(item: Dict[str, Any]) -> tuple[int, int, int, int] | None:
+    bbox = item.get("bbox")
+    if not isinstance(bbox, dict):
+        return None
+    try:
+        x1 = int(bbox.get("x1", 0))
+        y1 = int(bbox.get("y1", 0))
+        x2 = int(bbox.get("x2", 0))
+        y2 = int(bbox.get("y2", 0))
+    except (TypeError, ValueError):
+        return None
+    if x2 <= x1 or y2 <= y1:
+        return None
+    return x1, y1, x2, y2
+
+
+def _is_nearby_detection(item: Dict[str, Any], frame_width: int, frame_height: int) -> bool:
+    """
+    Heuristic distance estimator:
+    larger box area or tall boxes indicate closer objects.
+    """
+    if frame_width <= 0 or frame_height <= 0:
+        return False
+
+    bbox = _bbox_from_item(item)
+    if not bbox:
+        return False
+
+    x1, y1, x2, y2 = bbox
+    box_w = max(1, x2 - x1)
+    box_h = max(1, y2 - y1)
+    area_ratio = (box_w * box_h) / float(frame_width * frame_height)
+    height_ratio = box_h / float(frame_height)
+
+    label = _label_for(item)
+    if "person" in label:
+        return area_ratio >= 0.010 or height_ratio >= 0.15
+    if "stair" in label:
+        return area_ratio >= 0.008 or height_ratio >= 0.10
+    if any(x in label for x in ("car", "truck", "bus", "motorcycle", "bicycle", "traffic light", "stop sign")):
+        return area_ratio >= 0.010 or height_ratio >= 0.08
+    return area_ratio >= 0.008 or height_ratio >= 0.07
+
+
+def _local_guide_from_detections(
+    detections: Sequence[Dict[str, Any]],
+    frame_width: int = 0,
+    frame_height: int = 0,
+) -> Dict[str, Any]:
+    """Build quick local guidance from detections filtered by proximity."""
+    clear_guidance = "You can walk ahead. Continue forward."
+    if not detections:
+        return {"guidance": clear_guidance, "is_danger": False}
+
+    if frame_width > 0 and frame_height > 0:
+        nearby = [item for item in detections if _is_nearby_detection(item, frame_width, frame_height)]
+    else:
+        nearby = list(detections)
+
+    nearby_labels = [_label_for(item) for item in nearby]
+    obstacle_list = filter_obstacles(list(nearby))
+
+    if not nearby:
+        return {"guidance": clear_guidance, "is_danger": False}
+
+    if any(("car" in l or "truck" in l or "bus" in l or "motorcycle" in l or "bicycle" in l) for l in nearby_labels):
+        return {"guidance": "STOP — vehicle in your path", "is_danger": True}
+    if any("person" in l for l in nearby_labels):
+        return {"guidance": "Move cautiously around nearby person", "is_danger": True}
+    if any("stair" in l for l in nearby_labels):
+        return {"guidance": "STEP DOWN — stairs ahead", "is_danger": True}
+    if any("traffic light" in l or "stop sign" in l for l in nearby_labels):
+        return {"guidance": "Stop — signal sign detected", "is_danger": True}
+    if any("door" in l for l in nearby_labels):
+        return {"guidance": "Door ahead on your left", "is_danger": False}
+
+    if obstacle_list:
+        return {
+            "guidance": f"Obstacle ahead: {', '.join(obstacle_list[:2])}. Move carefully.",
+            "is_danger": True,
+        }
+
+    return {"guidance": clear_guidance, "is_danger": False}
+
+
+async def guide_scan_frame(frame_bgr, detections: Sequence[Dict[str, Any]] | None = None) -> Dict[str, Any]:
     """
     Analyze a camera frame for walking hazards using Gemini Vision.
     Returns {"guidance": str, "is_danger": bool}.
     """
+    detection_results = list(detections or [])
+    frame_width = int(getattr(frame_bgr, "shape", [0, 0])[1] or 0)
+    frame_height = int(getattr(frame_bgr, "shape", [0, 0])[0] or 0)
+    local_result = _local_guide_from_detections(detection_results, frame_width=frame_width, frame_height=frame_height)
+
+    # Local YOLO-based inference is fast and reliable for many obstacle types.
+    if detection_results:
+        return local_result
+
     api_key = os.getenv("GEMINI_API_KEY", "").strip()
     if not api_key:
-        return {"guidance": "Guide mode unavailable — no API key.", "is_danger": False}
+        return local_result
 
     import cv2
     _, encoded = cv2.imencode(".jpg", frame_bgr, [cv2.IMWRITE_JPEG_QUALITY, 70])
@@ -328,4 +427,3 @@ async def guide_scan_frame(frame_bgr) -> Dict[str, Any]:
     except Exception as e:
         print(f"[guide_scan_frame] ERROR: {e}")
         return {"guidance": "Continue with caution.", "is_danger": False}
-

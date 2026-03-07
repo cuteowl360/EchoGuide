@@ -880,6 +880,37 @@ audio.hidden { display: none; }
 }
 .guide-panel.danger .guide-guidance { color: #fca5a5; }
 
+.guide-log {
+  max-height: 160px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 0.38rem;
+  padding-right: 0.2rem;
+}
+
+.guide-log-empty {
+  color: var(--text-muted);
+  font-size: 0.8rem;
+  margin: 0;
+}
+
+.guide-log-entry {
+  padding: 0.42rem 0.58rem;
+  border-radius: var(--r-sm);
+  border: 1px solid rgba(56,189,248,0.2);
+  background: rgba(56,189,248,0.08);
+  color: var(--text-muted);
+  font-size: 0.76rem;
+  line-height: 1.25;
+}
+
+.guide-log-entry.danger {
+  border-color: rgba(248,113,113,0.35);
+  background: rgba(248,113,113,0.13);
+  color: #fca5a5;
+}
+
 /* Danger banner */
 .guide-danger-banner {
   display: flex;
@@ -896,4 +927,3 @@ audio.hidden { display: none; }
   margin-top: 2px;
 }
 .guide-danger-banner.hidden { display: none; }
-

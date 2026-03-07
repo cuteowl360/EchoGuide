@@ -18,9 +18,17 @@ class GuideMode {
     this._active   = false;
     this._busy     = false;          // prevent overlapping requests
     this._curAudio = null;           // currently playing Audio element
+    this._scanCount = 0;
+    this._lastSpokenAt = 0;
+    this._announceIntervalMs = Number.isFinite(Number(options.guideAnnouncementIntervalMs))
+      ? Number(options.guideAnnouncementIntervalMs)
+      : 2000;
+    this._announceIntervalMs = Math.max(2000, Number(this._announceIntervalMs));
 
-    this.INTERVAL_MS    = options.intervalMs    || 2000;
+    // Guide mode cadence and announcement throttle.
+    this.INTERVAL_MS    = 2000;
     this._onGuidance    = options.onGuidance    || (() => {});  // (text, isDanger)
+    this._onScanLog     = options.onScanLog     || (() => {});  // (entry: object)
     this._onStateChange = options.onStateChange || (() => {});  // (active)
   }
 
@@ -30,6 +38,9 @@ class GuideMode {
   start() {
     if (this._active) return;
     this._active = true;
+    this._scanCount = 0;
+    this._lastSpokenAt = 0;
+    console.log("[GuideSession] started");
     this._onStateChange(true);
     // First scan right away, then on interval
     this._scan();
@@ -43,6 +54,7 @@ class GuideMode {
     this._active = false;
     clearInterval(this._timer);
     this._timer = null;
+    console.log("[GuideSession] stopped");
     this._silence();
     this._onStateChange(false);
     console.log("[Guide] stopped");
@@ -56,6 +68,9 @@ class GuideMode {
 
     this._busy = true;
     try {
+      this._scanCount += 1;
+      const scanId = this._scanCount;
+      console.log(`[GuideSession] Scan #${scanId} start`, new Date().toISOString());
       const blob = await this._captureBlob();
       const form = new FormData();
       form.append("image", blob, "guide.jpg");
@@ -64,31 +79,56 @@ class GuideMode {
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
 
       const data = await res.json();
-      console.log("[Guide]", data.is_danger ? "⚠ DANGER" : "✓", data.guidance);
-      this._onGuidance(data.guidance, data.is_danger);
+      const now = Date.now();
+      const guidance = data.guidance || "";
+      const hasAudio = Boolean(data.audio_base64);
+      const shouldAnnounce = (now - this._lastSpokenAt) >= this._announceIntervalMs;
 
-      if (data.audio_base64) {
+      console.log(
+        `[GuideSession] Scan #${scanId} response`,
+        {
+          isDanger: data.is_danger,
+          guidance,
+          hasAudio,
+          statusCode: res.status,
+        }
+      );
+      this._onGuidance(guidance, data.is_danger);
+      this._onScanLog({
+        id: scanId,
+        guidance,
+        isDanger: data.is_danger,
+        detectionCount: data.detection_count ?? null,
+      });
+      if (shouldAnnounce && hasAudio) {
         this._playBase64Audio(data.audio_base64, data.is_danger);
-      } else {
+        this._lastSpokenAt = now;
+      } else if (shouldAnnounce) {
         this._speakFallback(data.guidance, data.is_danger);
+        this._lastSpokenAt = now;
+      }
+
+      if (!shouldAnnounce) {
+        console.log(`[GuideSession] Scan #${scanId} silence (throttled):`, guidance);
       }
     } catch (err) {
-      console.error("[Guide] scan error:", err);
+      const scanId = this._scanCount;
+      console.error(`[GuideSession] Scan #${scanId} error:`, err);
     } finally {
       this._busy = false;
     }
   }
 
   _captureBlob() {
-    const w = this._video.videoWidth;
-    const h = this._video.videoHeight;
-    this._canvas.width  = w;
-    this._canvas.height = h;
-    this._canvas.getContext("2d").drawImage(this._video, 0, 0, w, h);
+    const targetWidth = Math.min(this._video.videoWidth, 640);
+    const targetHeight = Math.round((targetWidth * this._video.videoHeight) / this._video.videoWidth);
+    this._canvas.width  = targetWidth;
+    this._canvas.height = targetHeight;
+    this._canvas.getContext("2d").drawImage(this._video, 0, 0, targetWidth, targetHeight);
     return new Promise((resolve, reject) =>
       this._canvas.toBlob(
         b => b ? resolve(b) : reject(new Error("Canvas toBlob failed")),
-        "image/jpeg", 0.7
+        "image/jpeg", 0.55
       )
     );
   }

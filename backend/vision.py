@@ -18,8 +18,15 @@ try:
 except Exception:  # pragma: no cover - optional dependency
     YOLO = None
 
+try:
+    import boto3
+except Exception:  # pragma: no cover - optional dependency
+    boto3 = None
+
 _MODEL = None
 _MODEL_LOCK = Lock()
+_AWS_CLIENT = None
+_AWS_CLIENT_LOCK = Lock()
 
 
 def get_model_path() -> str:
@@ -73,6 +80,43 @@ def _load_model() -> Optional["YOLO"]:
 def model_is_available() -> bool:
     """Return True when model backend can be used."""
     return _load_model() is not None
+
+
+def _load_rekognition_client():
+    """Load and cache an AWS Rekognition client."""
+    global _AWS_CLIENT
+    if boto3 is None:
+        logger.warning("boto3 is not installed. AWS Rekognition disabled.")
+        return None
+    if _AWS_CLIENT is not None:
+        return _AWS_CLIENT
+
+    with _AWS_CLIENT_LOCK:
+        if _AWS_CLIENT is not None:
+            return _AWS_CLIENT
+
+        region = os.getenv("AWS_REGION", "us-east-1").strip()
+        access_key = os.getenv("AWS_ACCESS_KEY_ID", "").strip()
+        secret_key = os.getenv("AWS_SECRET_ACCESS_KEY", "").strip()
+        session_kwargs = {}
+        if access_key and secret_key:
+            session_kwargs["aws_access_key_id"] = access_key
+            session_kwargs["aws_secret_access_key"] = secret_key
+
+        try:
+            session = boto3.session.Session(**session_kwargs)
+            _AWS_CLIENT = session.client("rekognition", region_name=region)
+            logger.info("AWS Rekognition client initialized for region %s", region)
+        except Exception:
+            logger.exception("Failed to init AWS Rekognition client.")
+            _AWS_CLIENT = None
+
+        return _AWS_CLIENT
+
+
+def rekognition_is_available() -> bool:
+    """Return True when AWS Rekognition can be used in this runtime."""
+    return _load_rekognition_client() is not None
 
 
 def _normalize_box(box_xyxy: np.ndarray) -> Dict[str, int]:
@@ -142,6 +186,70 @@ def detect_objects(
     except Exception:
         logger.exception("Object detection failed.")
         return []
+
+
+def detect_objects_aws(
+    frame_bgr: np.ndarray,
+    min_confidence: float = 55.0,
+    max_labels: int = 15,
+) -> List[Dict[str, Any]]:
+    """
+    Detect objects in an OpenCV BGR frame using AWS Rekognition.
+    Returns detections in the same structure as local YOLO output.
+    """
+    if frame_bgr is None or frame_bgr.size == 0:
+        return []
+
+    client = _load_rekognition_client()
+    if client is None:
+        return []
+
+    try:
+        success, encoded = cv2.imencode(".jpg", frame_bgr, [cv2.IMWRITE_JPEG_QUALITY, 75])
+        if not success:
+            return []
+
+        response = client.detect_labels(
+            Image={"Bytes": encoded.tobytes()},
+            MinConfidence=min_confidence,
+            MaxLabels=max_labels,
+        )
+    except Exception:
+        logger.exception("AWS Rekognition detect_labels failed.")
+        return []
+
+    h, w = frame_bgr.shape[:2]
+    detections: List[Dict[str, Any]] = []
+    for item in response.get("Labels", []):
+        label = str(item.get("Name", "")).lower().strip()
+        if not label:
+            continue
+        conf = float(item.get("Confidence", 0.0)) / 100.0
+        instances = item.get("Instances", [])
+        if instances:
+            for instance in instances:
+                bb = instance.get("BoundingBox") or {}
+                left = float(bb.get("Left", 0.0))
+                top = float(bb.get("Top", 0.0))
+                width = float(bb.get("Width", 0.0))
+                height = float(bb.get("Height", 0.0))
+                detections.append(
+                    {
+                        "label": label,
+                        "confidence": round(conf, 2),
+                        "bbox": {
+                            "x1": int(max(0.0, left) * w),
+                            "y1": int(max(0.0, top) * h),
+                            "x2": int(min(1.0, left + width) * w),
+                            "y2": int(min(1.0, top + height) * h),
+                        },
+                    }
+                )
+        else:
+            detections.append({"label": label, "confidence": round(conf, 2), "bbox": None})
+
+    detections.sort(key=lambda d: d.get("confidence", 0.0), reverse=True)
+    return detections[:max_labels]
 
 
 def summarize_objects(detections: List[Dict[str, Any]]) -> str:

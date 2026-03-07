@@ -1,7 +1,7 @@
 fastapi==0.115.0
 uvicorn==0.34.0
 python-multipart==0.0.18
-opencv-python==4.13.0.92
+opencv-python==4.10.0.82
 numpy==1.26.4
 pillow>=10.4.0
 python-dotenv>=1.0.1

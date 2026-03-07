@@ -6,6 +6,7 @@ import base64
 import json
 import logging
 import os
+import time
 from io import BytesIO
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
@@ -28,6 +29,7 @@ from .person_memory import (
     remember_person as remember_person_from_frame,
 )
 from .vision import detect_objects, model_is_available, summarize_objects
+from .vision import detect_objects_aws, rekognition_is_available
 from .navigation import (
     get_route,
     geocode_place,
@@ -132,6 +134,7 @@ async def health() -> Dict[str, Any]:
         "status": "ok",
         "features": {
             "object_detection": model_is_available(),
+            "aws_rekognition": rekognition_is_available(),
             "ocr": ocr_is_available(),
             "gemini": gemini_is_available(),
             "tts": tts_is_available(),
@@ -560,10 +563,51 @@ async def guide_scan(image: UploadFile = File(...)) -> Dict[str, Any]:
     if not image_bytes:
         raise HTTPException(status_code=400, detail="Empty image.")
 
+    request_id = int(time.time() * 1000)
+    logger.info("[guide] scan start id=%s bytes=%s", request_id, len(image_bytes))
+
     frame = _decode_frame(image_bytes)
 
-    # Gemini Vision hazard detection
-    result = await guide_scan_frame(frame)
+    # GUIDE_ENGINE controls detection backend for live guide frames.
+    # Set to "aws" (default) or "yolo" to switch back to the local model.
+    engine = os.getenv("GUIDE_ENGINE", "aws").strip().lower()
+    use_aws = engine in {"aws", "rekognition", "aws_rekognition"}
+    detections: List[Dict[str, Any]] = []
+    if use_aws:
+        aws_min_conf = 45.0
+        aws_max_labels = 25
+        try:
+            aws_min_conf = float(os.getenv("GUIDE_AWS_MIN_CONF", str(aws_min_conf)))
+            aws_max_labels = int(os.getenv("GUIDE_AWS_MAX_LABELS", str(aws_max_labels)))
+        except ValueError:
+            pass
+
+        detections = await asyncio.to_thread(
+            detect_objects_aws,
+            frame,
+            min_confidence=aws_min_conf,
+            max_labels=aws_max_labels,
+        )
+        if not detections:
+            logger.warning("[guide] AWS detection empty. Falling back to YOLO.")
+            detections = await asyncio.to_thread(detect_objects, frame)
+    else:
+        yolo_conf = 0.2
+        yolo_max = 50
+        try:
+            yolo_conf = float(os.getenv("GUIDE_YOLO_CONF", str(yolo_conf)))
+            yolo_max = int(os.getenv("GUIDE_YOLO_MAX", str(yolo_max)))
+        except ValueError:
+            pass
+
+        detections = await asyncio.to_thread(
+            detect_objects,
+            frame,
+            confidence_threshold=yolo_conf,
+            max_objects=yolo_max,
+        )
+
+    result = await guide_scan_frame(frame, detections=detections)
     guidance: str  = result["guidance"]
     is_danger: bool = result["is_danger"]
 
@@ -574,8 +618,18 @@ async def guide_scan(image: UploadFile = File(...)) -> Dict[str, Any]:
         if audio_bytes:
             audio_b64 = base64.b64encode(audio_bytes).decode("utf-8")
 
+    logger.info(
+        "[guide] scan end id=%s detections=%s danger=%s guidance=%s audio=%s",
+        request_id,
+        len(detections),
+        is_danger,
+        guidance,
+        bool(audio_b64),
+    )
+
     return {
         "guidance":    guidance,
         "is_danger":   is_danger,
+        "detection_count": len(detections),
         "audio_base64": audio_b64,
     }

@@ -22,6 +22,7 @@ const ocrTextEl = document.getElementById("ocrText");
 const audioPlayer = document.getElementById("audioPlayer");
 const idleOverlay = document.getElementById("idleOverlay");
 const scanRing = document.getElementById("scanRing");
+const guideSessionLogEl = document.getElementById("guideSessionLog");
 
 let stream = null;
 let isBusy = false;
@@ -31,11 +32,64 @@ function setStatus(message, state) {
   statusDot.className = "status-dot" + (state ? " " + state : "");
 }
 
+function isSecureContextForMedia() {
+  return (
+    location.protocol === "https:" ||
+    location.hostname === "localhost" ||
+    location.hostname === "127.0.0.1" ||
+    location.hostname === "::1"
+  );
+}
+
+function cameraAccessMessage(error) {
+  const name = error?.name || "Error";
+  if (name === "NotAllowedError") {
+    return "Camera permission was blocked. Open your browser settings and allow camera access for this site.";
+  }
+  if (name === "permission-denied" || error?.message === "permission-denied") {
+    return "Camera permission was blocked. Open your browser settings and allow camera access for this site.";
+  }
+  if (name === "NotFoundError" || name === "OverconstrainedError") {
+    return "No compatible camera found. Use a device with a camera and try again.";
+  }
+  if (name === "NotReadableError") {
+    return "Camera is busy or unavailable. Close other camera apps/tabs and try again.";
+  }
+  if (name === "SecurityError" || name === "TypeError") {
+    return "Camera requires HTTPS or localhost. Open this app at https://... or a localhost origin.";
+  }
+  if (name === "insecure-context") {
+    return "Camera requires HTTPS or localhost. Open this app with HTTPS or use localhost for testing.";
+  }
+  return `Camera access failed: ${error?.message || name}`;
+}
+
 function setActionState(working) {
   scanSceneBtn.disabled = working;
   readTextBtn.disabled = working;
   rememberPersonBtn.disabled = working;
   identifyPersonBtn.disabled = working;
+}
+
+function appendGuideSessionLog(entry = {}) {
+  if (!guideSessionLogEl) return;
+
+  if (guideSessionLogEl.querySelector(".guide-log-empty")) {
+    guideSessionLogEl.innerHTML = "";
+  }
+
+  const row = document.createElement("div");
+  row.className = `guide-log-entry${entry.isDanger ? " danger" : ""}`;
+  const time = new Date().toLocaleTimeString([], { minute: "2-digit", second: "2-digit" });
+  const count = Number.isFinite(Number(entry.detectionCount)) ? ` (${entry.detectionCount} detections)` : "";
+  row.textContent = `#${entry.id ?? "?"} · ${time} · ${entry.guidance || "No guidance"}${count}`;
+  guideSessionLogEl.appendChild(row);
+
+  const maxEntries = 40;
+  while (guideSessionLogEl.children.length > maxEntries) {
+    guideSessionLogEl.removeChild(guideSessionLogEl.firstElementChild);
+  }
+  guideSessionLogEl.scrollTop = guideSessionLogEl.scrollHeight;
 }
 
 function speakFallback(text) {
@@ -77,7 +131,7 @@ function resetResultPanels() {
   audioPlayer.removeAttribute("src");
 }
 
-function captureFrameBlob() {
+function captureFrameBlob(quality = 0.8) {
   const w = video.videoWidth;
   const h = video.videoHeight;
   if (!w || !h) {
@@ -92,14 +146,14 @@ function captureFrameBlob() {
   return new Promise((resolve, reject) => {
     canvas.toBlob(
       (blob) => {
-        if (!blob) {
-          reject(new Error("Unable to capture photo."));
-          return;
-        }
-        resolve(blob);
-      },
-      "image/jpeg",
-      0.8
+    if (!blob) {
+      reject(new Error("Unable to capture photo."));
+      return;
+    }
+    resolve(blob);
+  },
+  "image/jpeg",
+  Math.max(0.2, Math.min(1, quality))
     );
   });
 }
@@ -193,7 +247,7 @@ async function handleReadText() {
     setStatus("Start the camera first.");
     return;
   }
-  const blob = await captureFrameBlob();
+  const blob = await captureFrameBlob(0.98);
   const form = new FormData();
   form.append("image", blob, "text.jpg");
   await runAction("/read_text", form);
@@ -231,6 +285,25 @@ async function handleIdentifyPerson() {
 async function startCamera() {
   if (stream) return;
 
+  if (!isSecureContextForMedia()) {
+    throw new Error("insecure-context");
+  }
+
+  const cameraPerm = await (async () => {
+    try {
+      if (!navigator.permissions || !navigator.permissions.query) {
+        return null;
+      }
+      return await navigator.permissions.query({ name: "camera" });
+    } catch (_) {
+      return null;
+    }
+  })();
+
+  if (cameraPerm && cameraPerm.state === "denied") {
+    throw new Error("permission-denied");
+  }
+
   try {
     stream = await navigator.mediaDevices.getUserMedia({
       video: {
@@ -247,8 +320,9 @@ async function startCamera() {
     startBtn.querySelector(".btn-icon").innerHTML = '<svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><rect x="4" y="4" width="16" height="16" rx="2"/></svg>';
     startBtn.querySelector(".btn-label").textContent = "Stop Camera";
   } catch (error) {
-    setStatus("Camera access denied or unavailable.", "error");
-    speakFallback("Camera access denied or unavailable.");
+    const message = cameraAccessMessage(error);
+    setStatus(message, "error");
+    speakFallback(message);
   }
 }
 
@@ -348,6 +422,7 @@ const guideDangerText   = document.getElementById("guideDangerText");
 
 const guideMode = new GuideMode(video, canvas, {
   intervalMs: 2000,
+  guideAnnouncementIntervalMs: 2000,
   onGuidance: (text, isDanger) => {
     guideGuidanceEl.textContent = text;
     if (isDanger) {
@@ -366,16 +441,24 @@ const guideMode = new GuideMode(video, canvas, {
       setStatus(`Guide: ${text}`);
     }
   },
+  onScanLog: (entry) => {
+    appendGuideSessionLog(entry);
+  },
   onStateChange: (active) => {
     if (active) {
       guideModeBtn.classList.add("active");
       guideModeBtn.querySelector(".btn-label").textContent = "Stop Guide";
       guidePanel.classList.remove("hidden");
       guideGuidanceEl.textContent = "Starting scan…";
+      if (guideSessionLogEl) {
+        guideSessionLogEl.innerHTML = "";
+      }
+      appendGuideSessionLog({ id: "start", guidance: "Guide Mode active", isDanger: false, detectionCount: null });
     } else {
       guideModeBtn.classList.remove("active");
       guideModeBtn.querySelector(".btn-label").textContent = "Guide Mode";
       guidePanel.classList.add("hidden");
+      appendGuideSessionLog({ id: "end", guidance: "Guide Mode stopped", isDanger: false, detectionCount: null });
       setStatus("Guide Mode stopped.");
     }
   },
@@ -602,17 +685,11 @@ window.addEventListener("load", () => {
                      location.hostname !== "127.0.0.1";
 
   if (isInsecure) {
-    // Update overlay to show a clear message instead of being stuck
     const card = overlay.querySelector(".startup-card p");
-    if (card) card.textContent = "Camera & mic require a secure connection. Open this page on the server as http://localhost:8000 instead.";
+    if (card) card.textContent = "Camera & mic require a secure context. Use HTTPS for your site URL or open through localhost for testing.";
     const btn = overlay.querySelector(".startup-btn");
     if (btn) btn.textContent = "OK";
-    overlay.addEventListener("click", () => overlay.classList.add("hidden"));
-    startupBtn.addEventListener("click", (e) => { e.stopPropagation(); overlay.classList.add("hidden"); });
-    setStatus("Use http://localhost:8000 — camera requires HTTPS or localhost.", "error");
-    startBtn.disabled = true;
-    setActionState(true);
-    return;
+    setStatus("Use HTTPS or localhost for camera permissions.", "error");
   }
 
   if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
@@ -657,4 +734,3 @@ if ("serviceWorker" in navigator) {
       .catch((err) => console.warn("Service worker registration failed:", err));
   });
 }
-

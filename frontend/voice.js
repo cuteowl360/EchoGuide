@@ -218,8 +218,14 @@ class VoiceCommander {
   }
 
   _instantMatch(cmd) {
+    // Guide Mode
+    if (/\b(start|begin|activate|enable|turn on)\b.*\bguide\b|\bguide\b.*(mode|on|start)/.test(cmd) || /^guide\s*mode?$/.test(cmd))
+      return { intent: "start_guide", params: {} };
+    if (/\b(stop|end|exit|deactivate|disable|turn off)\b.*\bguide\b|\bguide\b.*(off|stop|end)/.test(cmd))
+      return { intent: "stop_guide", params: {} };
+
     // Stop / navigation
-    if (/\bstop\b/.test(cmd) && !/navigate|go to|take me/i.test(cmd))
+    if (/\bstop\b/.test(cmd) && !/navigate|go to|take me|guide/.test(cmd))
       return { intent: "stop_navigation", params: {} };
 
     // Help
@@ -252,12 +258,6 @@ class VoiceCommander {
       return { intent: "start_camera", params: {} };
     if (/\b(stop|close|turn off|disable)\b.*\bcamera\b|\bcamera\b.*\b(stop|off)\b/.test(cmd))
       return { intent: "stop_camera", params: {} };
-
-    // Guide Mode
-    if (/\b(start|begin|activate|enable|turn on)\b.*\bguide\b|\bguide\b.*(mode|on|start)/.test(cmd) || /^guide\s*mode?$/.test(cmd))
-      return { intent: "start_guide", params: {} };
-    if (/\b(stop|end|exit|deactivate|disable|turn off)\b.*\bguide\b|\bguide\b.*(off|stop|end)/.test(cmd))
-      return { intent: "stop_guide", params: {} };
 
     // Navigate — extract destination
     const navMatch = cmd.match(/\b(?:navigate|go|take me|directions?|how do i get)\b.*?\bto\b\s+([\w\s,]+?)(?:\s*$|\s*please)/i);
