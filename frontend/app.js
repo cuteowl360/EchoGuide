@@ -337,6 +337,106 @@ navStopBtn.addEventListener("click", () => {
   if (candidatesEl) { candidatesEl.innerHTML = ""; candidatesEl.classList.add("hidden"); }
 });
 
+// ── Voice commands ────────────────────────────────────────────────────────────
+const voicePill  = document.getElementById("voicePill");
+const voiceLabel = document.getElementById("voiceLabel");
+
+function handleVoiceCommand(type, params) {
+  switch (type) {
+    case "start_camera":
+      speakFallback("Starting camera.");
+      if (!stream) startCamera();
+      break;
+
+    case "stop_camera":
+      speakFallback("Stopping camera.");
+      stopCamera();
+      break;
+
+    case "scan_scene":
+      if (!stream) { speakFallback("Please start the camera first."); return; }
+      speakFallback("Scanning.");
+      resetResultPanels();
+      handleScanScene();
+      break;
+
+    case "read_text":
+      if (!stream) { speakFallback("Please start the camera first."); return; }
+      speakFallback("Reading text.");
+      resetResultPanels();
+      handleReadText();
+      break;
+
+    case "identify_person":
+      if (!stream) { speakFallback("Please start the camera first."); return; }
+      speakFallback("Identifying person.");
+      resetResultPanels();
+      handleIdentifyPerson();
+      break;
+
+    case "remember_person": {
+      if (!stream) { speakFallback("Please start the camera first."); return; }
+      speakFallback(`Saving ${params.name}.`);
+      (async () => {
+        try {
+          const blob = await captureFrameBlob();
+          const form = new FormData();
+          form.append("image", blob, "person.jpg");
+          form.append("name", params.name);
+          await runAction("/remember_person", form);
+        } catch (e) {
+          speakFallback("Could not save person.");
+        }
+      })();
+      break;
+    }
+
+    case "ask_for_name":
+      speakFallback("Please say the person's name.");
+      setStatus("Listening for name…");
+      break;
+
+    case "navigate": {
+      speakFallback(`Searching for ${params.destination}.`);
+      navPanel.classList.remove("hidden");
+      navDestInput.value = params.destination;
+      nav.init(video, canvas,
+        (msg)   => { navStatusEl.textContent = msg; },
+        (instr) => { navInstructionEl.textContent = instr || "—"; }
+      );
+      const candidatesEl = document.getElementById("navCandidates");
+      nav.search(params.destination, candidatesEl);
+      break;
+    }
+
+    case "stop_navigation": {
+      speakFallback("Navigation stopped.");
+      nav.stop();
+      navInstructionEl.textContent = "—";
+      const stopCandidatesEl = document.getElementById("navCandidates");
+      if (stopCandidatesEl) { stopCandidatesEl.innerHTML = ""; stopCandidatesEl.classList.add("hidden"); }
+      break;
+    }
+
+    case "help":
+      speakFallback(
+        "Voice commands: " +
+        "Say Echo describe to scan what you see. " +
+        "Say Echo read text. " +
+        "Say Echo identify to identify a person. " +
+        "Say Echo remember, then a name, to save a face. " +
+        "Say Echo navigate to a place name to get directions. " +
+        "Say Echo stop to end navigation. " +
+        "Say Echo start camera or stop camera."
+      );
+      break;
+
+    case "unknown":
+      speakFallback(`Sorry, I didn't understand. Say Echo help to hear available commands.`);
+      break;
+  }
+}
+
 window.addEventListener("load", () => {
   if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
     setStatus("Camera is not supported in this browser.");
@@ -345,4 +445,23 @@ window.addEventListener("load", () => {
     return;
   }
   setStatus("Press Start Camera to begin.");
+
+  // Start always-on voice commands
+  if (voiceCommander.supported) {
+    voiceCommander.start(handleVoiceCommand, (state) => {
+      if (state === "listening") {
+        voicePill.className = "voice-pill listening";
+        voiceLabel.textContent = 'Say "Echo"';
+      } else if (state === "error") {
+        voicePill.className = "voice-pill error";
+        voiceLabel.textContent = "Mic blocked";
+      } else {
+        voicePill.className = "voice-pill";
+        voiceLabel.textContent = "Voice off";
+      }
+    });
+  } else {
+    voicePill.className = "voice-pill error";
+    voiceLabel.textContent = "Voice unsupported";
+  }
 });

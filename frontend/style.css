@@ -684,3 +684,60 @@ audio.hidden { display: none; }
   color: var(--text-muted);
   line-height: 1.4;
 }
+
+/* ── Voice indicator pill ────────────────────────────────────────────────── */
+.voice-pill {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 10px;
+  border-radius: 20px;
+  background: var(--glass-bg);
+  border: 1px solid var(--glass-border);
+  font-size: 0.7rem;
+  color: var(--text-muted);
+  user-select: none;
+  transition: border-color 0.3s;
+}
+
+.voice-mic {
+  opacity: 0.55;
+  flex-shrink: 0;
+  transition: opacity 0.3s;
+}
+
+.voice-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--text-muted);
+  flex-shrink: 0;
+  transition: background 0.3s, box-shadow 0.3s;
+}
+
+/* Active: green pulsing dot */
+.voice-pill.listening .voice-dot {
+  background: #22c55e;
+  box-shadow: 0 0 6px #22c55e88;
+  animation: voice-pulse 1.8s ease-in-out infinite;
+}
+.voice-pill.listening .voice-mic {
+  opacity: 0.9;
+  stroke: #22c55e;
+}
+.voice-pill.listening {
+  border-color: rgba(34, 197, 94, 0.35);
+}
+
+/* Error: red dot */
+.voice-pill.error .voice-dot {
+  background: #f87171;
+}
+.voice-pill.error {
+  border-color: rgba(248, 113, 113, 0.35);
+}
+
+@keyframes voice-pulse {
+  0%, 100% { opacity: 1;   transform: scale(1);    }
+  50%       { opacity: 0.5; transform: scale(0.8);  }
+}
