@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
     <title>EchoGuide</title>
     <meta name="description" content="AI vision assistant for the visually impaired." />
-    <link rel="stylesheet" href="/static/style.css" />
+    <link rel="stylesheet" href="/static/style.css?v=2" />
   </head>
   <body>
     <main class="app-shell">
@@ -95,18 +95,25 @@
       <!-- Navigation panel (shown when Navigate is active) -->
       <section class="result-panel glass nav-panel hidden" id="navPanel" aria-live="polite">
         <div class="result-section">
-          <span class="result-label">Navigation</span>
+          <span class="result-label">Navigate</span>
           <div class="nav-input-row">
-            <input id="navDestInput" type="text" placeholder="Where do you want to go?" autocomplete="off" />
-            <button id="navGoBtn" class="btn btn-start nav-go-btn">Go</button>
+            <input id="navDestInput" type="text" placeholder="e.g. Starbucks, hospital, park…" autocomplete="off" spellcheck="false" />
+            <button id="navGoBtn" class="btn btn-start nav-go-btn">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+            </button>
           </div>
-          <p class="result-value" id="navStatus">Say or type your destination.</p>
+          <p class="result-value nav-status-text" id="navStatus">Type a destination and press Search.</p>
         </div>
-        <div class="divider"></div>
-        <div class="result-section">
+
+        <!-- Candidate cards — shown after search -->
+        <div id="navCandidates" class="nav-candidates hidden"></div>
+
+        <div class="divider" id="navInstructionDivider" style="display:none"></div>
+        <div class="result-section" id="navInstructionSection" style="display:none">
           <span class="result-label">Current Instruction</span>
           <p class="result-value answer" id="navInstruction">—</p>
         </div>
+
         <div class="divider"></div>
         <div class="result-section nav-stop-row">
           <button id="navStopBtn" class="btn btn-navigate nav-stop-btn">Stop Navigation</button>
@@ -115,8 +122,8 @@
 
     </main>
 
-    <script src="/static/navigation.js" defer></script>
-    <script src="/static/app.js" defer></script>
+    <script src="/static/navigation.js?v=2" defer></script>
+    <script src="/static/app.js?v=2" defer></script>
     <script>
       (async function () {
         try {

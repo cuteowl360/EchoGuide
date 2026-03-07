@@ -11,8 +11,9 @@ import requests
 
 logger = logging.getLogger(__name__)
 
-ORS_DIRECTIONS_URL = "https://api.openrouteservice.org/v2/directions/foot-walking/geojson"
-ORS_GEOCODE_URL    = "https://api.openrouteservice.org/geocode/search"
+ORS_DIRECTIONS_URL  = "https://api.openrouteservice.org/v2/directions/foot-walking/geojson"
+ORS_GEOCODE_URL     = "https://api.openrouteservice.org/geocode/search"
+ORS_AUTOCOMPLETE_URL = "https://api.openrouteservice.org/geocode/autocomplete"
 
 # Obstacles that are worth announcing while the user is walking
 OBSTACLE_LABELS = {
@@ -25,40 +26,91 @@ OBSTACLE_LABELS = {
 
 # ── Geocoding ─────────────────────────────────────────────────────────────────
 
-def geocode_place(query: str, near_lat: float, near_lon: float) -> Dict[str, Any]:
+def geocode_place(
+    query: str,
+    near_lat: float,
+    near_lon: float,
+    limit: int = 3,
+) -> List[Dict[str, Any]]:
     """
-    Convert a place name to coordinates using ORS Pelias geocoding.
-    Returns {"lat": ..., "lon": ..., "name": ...} or raises ValueError.
+    Search for a place using ORS autocomplete (typo-tolerant fuzzy matching).
+    Falls back to standard search if autocomplete returns nothing or errors.
+
+    Returns a list of up to `limit` candidates, each:
+      {
+        "lat": float, "lon": float,
+        "name": str,          # e.g. "Starbucks"
+        "address": str,       # full human-readable address
+        "distance_m": float,  # metres from the user's current position
+        "category": str,      # e.g. "cafe" or ""
+      }
+    Raises ValueError if nothing is found.
     """
     api_key = os.getenv("ORS_API_KEY", "").strip()
     if not api_key:
         raise ValueError("ORS_API_KEY is not set in .env")
 
-    resp = requests.get(
-        ORS_GEOCODE_URL,
-        params={
-            "api_key": api_key,
-            "text": query,
-            "boundary.circle.lat": near_lat,
-            "boundary.circle.lon": near_lon,
-            "boundary.circle.radius": 20,  # km radius to prioritise nearby results
-            "size": 1,
-            "lang": "en",
-        },
-        timeout=10,
-    )
+    common_params = {
+        "api_key": api_key,
+        "text": query,
+        "focus.point.lat": near_lat,     # bias results toward user's location
+        "focus.point.lon": near_lon,
+        "boundary.circle.lat": near_lat,
+        "boundary.circle.lon": near_lon,
+        "boundary.circle.radius": 25,    # km
+        "size": limit,
+        "lang": "en",
+    }
 
-    if resp.status_code != 200:
-        raise ValueError(f"ORS geocoding error {resp.status_code}: {resp.text[:200]}")
+    features: List[Any] = []
 
-    features = resp.json().get("features", [])
+    # 1️⃣  Try autocomplete first — handles partial words and typos
+    try:
+        r = requests.get(ORS_AUTOCOMPLETE_URL, params=common_params, timeout=10)
+        if r.status_code == 200:
+            features = r.json().get("features", [])
+    except Exception:
+        pass
+
+    # 2️⃣  Fall back to standard search for longer / corrected queries
     if not features:
-        raise ValueError(f"No locations found for '{query}'.")
+        try:
+            r = requests.get(ORS_GEOCODE_URL, params=common_params, timeout=10)
+            if r.status_code == 200:
+                features = r.json().get("features", [])
+            else:
+                raise ValueError(f"ORS geocoding error {r.status_code}: {r.text[:200]}")
+        except ValueError:
+            raise
+        except Exception as exc:
+            raise ValueError(f"Geocoding request failed: {exc}") from exc
 
-    feat = features[0]
-    lon, lat = feat["geometry"]["coordinates"]
-    name = feat["properties"].get("label", query)
-    return {"lat": lat, "lon": lon, "name": name}
+    if not features:
+        raise ValueError(f"No locations found for '{query}'. Try a different spelling or add a city name.")
+
+    results: List[Dict[str, Any]] = []
+    for feat in features:
+        lon, lat = feat["geometry"]["coordinates"]
+        props    = feat.get("properties", {})
+        name     = props.get("name") or props.get("label", query)
+        address  = props.get("label", name)
+        category = ""
+        cats     = props.get("addendum", {}).get("osm", {}).get("amenity", "")
+        if cats:
+            category = cats
+        dist_m   = haversine_m(near_lat, near_lon, lat, lon)
+        results.append({
+            "lat": lat,
+            "lon": lon,
+            "name": name,
+            "address": address,
+            "distance_m": round(dist_m),
+            "category": category,
+        })
+
+    # Sort by distance so the closest is always first
+    results.sort(key=lambda x: x["distance_m"])
+    return results
 
 
 # ── Route fetching ────────────────────────────────────────────────────────────

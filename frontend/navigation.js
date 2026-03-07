@@ -28,7 +28,7 @@ function haversineM(lat1, lon1, lat2, lon2) {
 }
 
 // ── Geocoding (via backend → ORS, key stays server-side) ────────────────────
-async function geocodeDestination(query, proximityLat, proximityLon) {
+async function searchDestinations(query, proximityLat, proximityLon) {
   const res = await fetch("/navigate/geocode", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -36,9 +36,15 @@ async function geocodeDestination(query, proximityLat, proximityLon) {
   });
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));
-    throw new Error(err.detail || `Geocoding failed: ${res.status}`);
+    throw new Error(err.detail || `Search failed: ${res.status}`);
   }
-  return await res.json();  // { lat, lon, name }
+  const data = await res.json();
+  return data.candidates; // [{ lat, lon, name, address, distance_m, category }]
+}
+
+function formatDistance(m) {
+  if (m < 1000) return `${m} m away`;
+  return `${(m / 1000).toFixed(1)} km away`;
 }
 
 // ── Audio helper ──────────────────────────────────────────────────────────────
@@ -70,22 +76,24 @@ function speakFallback(text) {
 
 // ── Navigation state ──────────────────────────────────────────────────────────
 const nav = {
-  _token: "",
   _steps: [],
   _currentStep: 0,
   _watchId: null,
   _obstacleTimer: null,
   _videoEl: null,
   _canvasEl: null,
-  _onStatus: null,  // callback(msg)
+  _onStatus: null,
+  _onInstruction: null,
   _ttsAvailable: false,
+  _originLat: null,
+  _originLon: null,
 
   /** Call once on page load. */
-  init(videoEl, canvasEl, onStatus) {
-    this._videoEl = videoEl;
-    this._canvasEl = canvasEl;
-    this._onStatus = onStatus || console.log;
-    // Check if TTS is configured
+  init(videoEl, canvasEl, onStatus, onInstruction) {
+    this._videoEl       = videoEl;
+    this._canvasEl      = canvasEl;
+    this._onStatus      = onStatus      || console.log;
+    this._onInstruction = onInstruction || console.log;
     fetch("/health").then(r => r.json()).then(d => {
       this._ttsAvailable = d?.features?.tts ?? false;
     }).catch(() => {});
@@ -100,33 +108,75 @@ const nav = {
     }
   },
 
-  /** Start navigation to a spoken/typed destination string. */
-  async startNavigation(destinationText) {
+  /** Step 1: search and render candidate cards. */
+  async search(destinationText, candidatesEl) {
     this._onStatus("Getting your location…");
 
-    let originPos;
+    let pos;
     try {
-      originPos = await new Promise((resolve, reject) => {
+      pos = await new Promise((resolve, reject) =>
         navigator.geolocation.getCurrentPosition(resolve, reject, {
           enableHighAccuracy: true, timeout: 10000,
-        });
-      });
-    } catch (e) {
-      this._onStatus("Could not get your GPS location.");
+        })
+      );
+    } catch {
+      this._onStatus("GPS unavailable. Enable location access and try again.");
       speakFallback("Could not get your GPS location. Please enable location access.");
-      return;
+      return [];
     }
 
-    const { latitude: oLat, longitude: oLon } = originPos.coords;
-    this._onStatus(`Searching for "${destinationText}"…`);
+    this._originLat = pos.coords.latitude;
+    this._originLon = pos.coords.longitude;
+    this._onStatus(`Searching for “${destinationText}”…`);
 
-    let dest;
+    let candidates;
     try {
-      dest = await geocodeDestination(destinationText, oLat, oLon);
+      candidates = await searchDestinations(destinationText, this._originLat, this._originLon);
     } catch (e) {
-      this._speak(`Sorry, I could not find ${destinationText}.`);
-      return;
+      this._onStatus(e.message || `Could not find “${destinationText}”.`);
+      speakFallback(`Sorry, I could not find ${destinationText}.`);
+      return [];
     }
+
+    if (!candidates?.length) {
+      this._onStatus(`No results for “${destinationText}”. Try a different spelling.`);
+      speakFallback(`No results found for ${destinationText}.`);
+      return [];
+    }
+
+    // Render candidate cards
+    candidatesEl.innerHTML = "";
+    candidates.forEach((c) => {
+      const card = document.createElement("button");
+      card.className = "nav-candidate-card";
+      card.setAttribute("aria-label", `Navigate to ${c.name}, ${c.address}`);
+      card.innerHTML = `
+        <div class="nav-candidate-main">
+          <span class="nav-candidate-name">${c.name}</span>
+          <span class="nav-candidate-dist">${formatDistance(c.distance_m)}</span>
+        </div>
+        <div class="nav-candidate-address">${c.address}</div>
+      `;
+      card.addEventListener("click", () => this._confirmAndRoute(c, candidatesEl));
+      candidatesEl.appendChild(card);
+    });
+    candidatesEl.classList.remove("hidden");
+
+    const count = candidates.length;
+    this._onStatus(`Found ${count} result${count > 1 ? "s" : ""}. Tap one to navigate.`);
+    speakFallback(
+      count === 1
+        ? `Found ${candidates[0].name}, ${formatDistance(candidates[0].distance_m)}. Tap to start.`
+        : `Found ${count} results nearby. Please choose one.`
+    );
+    return candidates;
+  },
+
+  /** Step 2: user tapped a card — calculate and start route. */
+  async _confirmAndRoute(dest, candidatesEl) {
+    candidatesEl.querySelectorAll(".nav-candidate-card").forEach(c => {
+      c.classList.toggle("chosen", c.querySelector(".nav-candidate-name")?.textContent === dest.name);
+    });
 
     this._onStatus(`Routing to ${dest.name}…`);
 
@@ -136,30 +186,41 @@ const nav = {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          origin_lat: oLat, origin_lon: oLon,
+          origin_lat: this._originLat, origin_lon: this._originLon,
           dest_lat: dest.lat, dest_lon: dest.lon,
         }),
       });
-      if (!res.ok) throw new Error(await res.text());
+      if (!res.ok) {
+        const errBody = await res.json().catch(() => ({}));
+        throw new Error(errBody.detail || `Server error ${res.status}`);
+      }
       routeData = await res.json();
     } catch (e) {
-      this._speak("Could not calculate a route. Check your Mapbox API key.");
+      this._speak(`Could not calculate a route: ${e.message}`);
       return;
     }
 
-    this._steps = routeData.route.steps;
+    this._steps       = routeData.route.steps;
     this._currentStep = 0;
 
-    const distKm = (routeData.route.total_distance_m / 1000).toFixed(1);
-    const durMin = Math.round(routeData.route.total_duration_s / 60);
-    this._speak(
-      `Route found to ${dest.name}. ${distKm} kilometres, about ${durMin} minutes. ` +
-      this._steps[0]?.instruction ?? ""
-    );
-    if (routeData.first_instruction_audio) {
-      // The server already synthesised the first step
-      playBase64Audio(routeData.first_instruction_audio);
-    }
+    const distKm  = (routeData.route.total_distance_m / 1000).toFixed(1);
+    const durMin  = Math.round(routeData.route.total_duration_s / 60);
+    const firstInstr = this._steps[0]?.instruction ?? "";
+
+    const announcement =
+      `Navigating to ${dest.name}. Address: ${dest.address}. ` +
+      `${distKm} kilometres, about ${durMin} minute${durMin !== 1 ? "s" : ""} on foot. ` +
+      firstInstr;
+
+    this._speak(announcement);
+    this._onInstruction(firstInstr);
+
+    const instrSection = document.getElementById("navInstructionSection");
+    const instrDivider = document.getElementById("navInstructionDivider");
+    if (instrSection) instrSection.style.display = "";
+    if (instrDivider) instrDivider.style.display = "";
+
+    if (routeData.first_instruction_audio) playBase64Audio(routeData.first_instruction_audio);
 
     this._startTracking();
     this._startObstacleScanning();
@@ -194,6 +255,7 @@ const nav = {
       } else {
         const next = this._steps[this._currentStep];
         this._speak(next.instruction);
+        this._onInstruction(next.instruction);
       }
     } else if (dist < 50) {
       // Approaching — give a heads-up
@@ -250,6 +312,13 @@ const nav = {
     this._stopObstacleScanning();
     this._steps = [];
     this._currentStep = 0;
+    this._originLat = null;
+    this._originLon = null;
     this._onStatus("Navigation stopped.");
+    if (this._onInstruction) this._onInstruction("—");
+    const instrSection = document.getElementById("navInstructionSection");
+    const instrDivider = document.getElementById("navInstructionDivider");
+    if (instrSection) instrSection.style.display = "none";
+    if (instrDivider) instrDivider.style.display = "none";
   },
 };

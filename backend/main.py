@@ -16,8 +16,7 @@ import numpy as np
 from dotenv import load_dotenv
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, StreamingResponse
-from fastapi.staticfiles import StaticFiles
+from fastapi.responses import FileResponse
 
 from .elevenlabs_client import is_available as tts_is_available, synthesize_speech
 from .gemini_client import describe_scene, is_available as gemini_is_available
@@ -58,7 +57,24 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-app.mount("/static", StaticFiles(directory=str(FRONTEND_DIR)), name="static")
+from fastapi.responses import HTMLResponse, Response
+
+# Serve static files with no-cache headers so the browser always gets fresh JS/CSS
+@app.get("/static/{file_path:path}")
+async def static_files(file_path: str) -> Response:
+    full_path = FRONTEND_DIR / file_path
+    if not full_path.is_file():
+        raise HTTPException(status_code=404, detail="File not found.")
+    suffix = full_path.suffix.lower()
+    media_types = {".js": "application/javascript", ".css": "text/css",
+                   ".html": "text/html", ".png": "image/png",
+                   ".jpg": "image/jpeg", ".ico": "image/x-icon"}
+    content_type = media_types.get(suffix, "application/octet-stream")
+    return Response(
+        content=full_path.read_bytes(),
+        media_type=content_type,
+        headers={"Cache-Control": "no-store"},
+    )
 
 # Auth routes (/auth/register, /auth/login, /auth/logout, /auth/me)
 app.include_router(_auth.router)
@@ -391,17 +407,20 @@ class NavGeocodeRequest(BaseModel):
 
 @app.post("/navigate/geocode")
 async def navigate_geocode(req: NavGeocodeRequest) -> Dict[str, Any]:
-    """Geocode a place name to coordinates using ORS (server-side, key stays private)."""
+    """
+    Search for a place name near the user's location.
+    Returns up to 3 candidates with name, address, and distance.
+    """
     if not req.query.strip():
         raise HTTPException(status_code=400, detail="query is required.")
     try:
-        result = await asyncio.to_thread(geocode_place, req.query, req.near_lat, req.near_lon)
+        candidates = await asyncio.to_thread(geocode_place, req.query, req.near_lat, req.near_lon)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
     except Exception:
         logger.exception("navigate_geocode failed")
         raise HTTPException(status_code=500, detail="Geocoding failed.")
-    return {"status": "ok", **result}
+    return {"status": "ok", "candidates": candidates}
 
 
 @app.post("/navigate/route")

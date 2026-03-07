@@ -312,17 +312,18 @@ navigateBtn.addEventListener("click", () => {
   navPanel.classList.toggle("hidden");
   if (!navPanel.classList.contains("hidden")) {
     navDestInput.focus();
-    nav.init(video, canvas, (msg) => {
-      navStatusEl.textContent = msg;
-      navInstructionEl.textContent = msg;
-    });
+    nav.init(video, canvas,
+      (msg) => { navStatusEl.textContent = msg; },
+      (instr) => { navInstructionEl.textContent = instr || "—"; }
+    );
   }
 });
 
 navGoBtn.addEventListener("click", () => {
   const dest = navDestInput.value.trim();
   if (!dest) { navStatusEl.textContent = "Please enter a destination."; return; }
-  nav.startNavigation(dest);
+  const candidatesEl = document.getElementById("navCandidates");
+  nav.search(dest, candidatesEl);
 });
 
 navDestInput.addEventListener("keydown", (e) => {
@@ -332,6 +333,8 @@ navDestInput.addEventListener("keydown", (e) => {
 navStopBtn.addEventListener("click", () => {
   nav.stop();
   navInstructionEl.textContent = "—";
+  const candidatesEl = document.getElementById("navCandidates");
+  if (candidatesEl) { candidatesEl.innerHTML = ""; candidatesEl.classList.add("hidden"); }
 });
 
 window.addEventListener("load", () => {

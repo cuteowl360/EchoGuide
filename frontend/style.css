@@ -619,3 +619,68 @@ audio.hidden { display: none; }
   border: 1px solid rgba(252,165,165,0.15);
   font-size: 0.9rem;
 }
+
+/* ── Destination candidate cards ─────────────────────────────────────────── */
+.nav-candidates {
+  display: flex;
+  flex-direction: column;
+  gap: 0.55rem;
+  margin-top: 0.35rem;
+}
+
+.nav-status-text { margin-top: 0.35rem; }
+
+.nav-candidate-card {
+  width: 100%;
+  text-align: left;
+  background: rgba(56,189,248,0.06);
+  border: 1px solid rgba(56,189,248,0.18);
+  border-radius: var(--r-md);
+  padding: 0.8rem 1rem;
+  cursor: pointer;
+  color: var(--text);
+  font-family: inherit;
+  transition: background 0.15s, border-color 0.15s, transform 0.12s var(--ease-spring);
+}
+.nav-candidate-card:hover {
+  background: rgba(56,189,248,0.12);
+  border-color: rgba(56,189,248,0.35);
+}
+.nav-candidate-card:active { transform: scale(0.98); }
+.nav-candidate-card.chosen {
+  background: rgba(56,189,248,0.16);
+  border-color: var(--accent-sky);
+  box-shadow: 0 0 0 2px rgba(56,189,248,0.25);
+}
+
+.nav-candidate-main {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  margin-bottom: 0.2rem;
+}
+
+.nav-candidate-name {
+  font-size: 0.96rem;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.nav-candidate-dist {
+  font-size: 0.75rem;
+  font-weight: 600;
+  padding: 0.15rem 0.55rem;
+  border-radius: 999px;
+  background: rgba(45,212,191,0.15);
+  border: 1px solid rgba(45,212,191,0.3);
+  color: var(--accent-teal);
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.nav-candidate-address {
+  font-size: 0.78rem;
+  color: var(--text-muted);
+  line-height: 1.4;
+}
