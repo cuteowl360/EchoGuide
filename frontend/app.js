@@ -264,6 +264,8 @@ function stopCamera() {
 }
 
 startBtn.addEventListener("click", async () => {
+  // Guarantee voice starts on first user gesture if it didn't auto-start
+  _startVoice();
   if (!stream) {
     await startCamera();
     return;
@@ -437,6 +439,28 @@ function handleVoiceCommand(type, params) {
   }
 }
 
+let _voiceStarted = false;
+
+function _startVoice() {
+  if (_voiceStarted || !voiceCommander.supported) return;
+  const ok = voiceCommander.start(handleVoiceCommand, (state) => {
+    if (state === "listening") {
+      voicePill.className = "voice-pill listening";
+      voiceLabel.textContent = 'Say "Echo"';
+    } else if (state === "activated") {
+      voicePill.className = "voice-pill activated";
+      voiceLabel.textContent = "Listening…";
+    } else if (state === "error") {
+      voicePill.className = "voice-pill error";
+      voiceLabel.textContent = "Mic blocked";
+    } else {
+      voicePill.className = "voice-pill";
+      voiceLabel.textContent = "Voice off";
+    }
+  });
+  if (ok) _voiceStarted = true;
+}
+
 window.addEventListener("load", () => {
   if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
     setStatus("Camera is not supported in this browser.");
@@ -446,20 +470,9 @@ window.addEventListener("load", () => {
   }
   setStatus("Press Start Camera to begin.");
 
-  // Start always-on voice commands
   if (voiceCommander.supported) {
-    voiceCommander.start(handleVoiceCommand, (state) => {
-      if (state === "listening") {
-        voicePill.className = "voice-pill listening";
-        voiceLabel.textContent = 'Say "Echo"';
-      } else if (state === "error") {
-        voicePill.className = "voice-pill error";
-        voiceLabel.textContent = "Mic blocked";
-      } else {
-        voicePill.className = "voice-pill";
-        voiceLabel.textContent = "Voice off";
-      }
-    });
+    // Try immediately — works if mic permission was already granted
+    _startVoice();
   } else {
     voicePill.className = "voice-pill error";
     voiceLabel.textContent = "Voice unsupported";

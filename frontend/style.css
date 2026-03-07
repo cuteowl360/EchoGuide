@@ -729,6 +729,20 @@ audio.hidden { display: none; }
   border-color: rgba(34, 197, 94, 0.35);
 }
 
+/* Activated: yellow/amber — Echo heard, waiting for command */
+.voice-pill.activated .voice-dot {
+  background: #fbbf24;
+  box-shadow: 0 0 8px #fbbf2499;
+  animation: voice-pulse 0.7s ease-in-out infinite;
+}
+.voice-pill.activated .voice-mic {
+  opacity: 1;
+  stroke: #fbbf24;
+}
+.voice-pill.activated {
+  border-color: rgba(251, 191, 36, 0.5);
+}
+
 /* Error: red dot */
 .voice-pill.error .voice-dot {
   background: #f87171;
