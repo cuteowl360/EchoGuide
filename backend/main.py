@@ -68,11 +68,25 @@ async def static_files(file_path: str) -> Response:
     suffix = full_path.suffix.lower()
     media_types = {".js": "application/javascript", ".css": "text/css",
                    ".html": "text/html", ".png": "image/png",
-                   ".jpg": "image/jpeg", ".ico": "image/x-icon"}
+                   ".jpg": "image/jpeg", ".ico": "image/x-icon",
+                   ".webmanifest": "application/manifest+json"}
     content_type = media_types.get(suffix, "application/octet-stream")
     return Response(
         content=full_path.read_bytes(),
         media_type=content_type,
+        headers={"Cache-Control": "no-store"},
+    )
+
+
+@app.get("/sw.js")
+async def service_worker() -> Response:
+    """Serve the service worker script from the app root so it can scope to "/"."""
+    full_path = FRONTEND_DIR / "sw.js"
+    if not full_path.is_file():
+        raise HTTPException(status_code=404, detail="File not found.")
+    return Response(
+        content=full_path.read_bytes(),
+        media_type="application/javascript",
         headers={"Cache-Control": "no-store"},
     )
 

@@ -613,3 +613,13 @@ window.addEventListener("load", () => {
   }
 });
 
+// Register service worker for offline support and installability (PWA).
+if ("serviceWorker" in navigator) {
+  window.addEventListener("load", () => {
+    navigator.serviceWorker
+      .register("/sw.js", { scope: "/" })
+      .then(() => console.log("Service worker registered."))
+      .catch((err) => console.warn("Service worker registration failed:", err));
+  });
+}
+
