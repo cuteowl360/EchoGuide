@@ -22,6 +22,7 @@ const ocrTextEl = document.getElementById("ocrText");
 const audioPlayer = document.getElementById("audioPlayer");
 const idleOverlay = document.getElementById("idleOverlay");
 const scanRing = document.getElementById("scanRing");
+const faceOverlayCanvas = document.getElementById("faceOverlayCanvas");
 
 let stream = null;
 let isBusy = false;
@@ -75,6 +76,8 @@ function resetResultPanels() {
   ocrTextEl.textContent = "";
   audioPlayer.pause();
   audioPlayer.removeAttribute("src");
+  renderFaces([], 0);
+  clearFaceBoxes();
 }
 
 function captureFrameBlob() {
@@ -222,10 +225,137 @@ async function handleIdentifyPerson() {
     setStatus("Start the camera first.");
     return;
   }
-  const blob = await captureFrameBlob();
-  const form = new FormData();
-  form.append("image", blob, "identify.jpg");
-  await runAction("/identify_person", form);
+  if (isBusy) return;
+  isBusy = true;
+  setActionState(true);
+  scanRing.classList.add("active");
+  setStatus("Identifying people\u2026", "working");
+
+  try {
+    const blob = await captureFrameBlob();
+    const form = new FormData();
+    form.append("image", blob, "identify.jpg");
+
+    const data = await callJsonEndpoint("/identify_all_persons", form);
+    const description = data?.text || "No result.";
+
+    answerEl.textContent = description;
+    ocrTextEl.textContent = "";
+    renderFaces(data?.faces || [], data?.count || 0);
+    renderObjects(data?.detected_objects || []);
+
+    if (data?.faces?.length) {
+      drawFaceBoxes(data.faces);
+    }
+
+    if (data?.audio_base64) {
+      playBase64Audio(data.audio_base64);
+    } else {
+      await speakText(description);
+    }
+    setStatus("Done.", "active");
+  } catch (error) {
+    const message = error?.message || "Identify failed.";
+    answerEl.textContent = `Error: ${message}`;
+    ocrTextEl.textContent = "";
+    setStatus(message, "error");
+    speakFallback(message);
+  } finally {
+    isBusy = false;
+    scanRing.classList.remove("active");
+    setActionState(false);
+  }
+}
+
+// ── Face detection helpers ────────────────────────────────────────────────────
+
+function renderFaces(faces, count) {
+  const facesEl = document.getElementById("detectedFaces");
+  if (!facesEl) return;
+  facesEl.innerHTML = "";
+  if (!count || !faces.length) {
+    const li = document.createElement("li");
+    li.textContent = "No faces detected.";
+    li.style.color = "rgba(160,185,230,0.45)";
+    li.style.listStyle = "none";
+    facesEl.appendChild(li);
+    return;
+  }
+  for (const face of faces) {
+    const li = document.createElement("li");
+    li.className = face.name ? "tag" : "tag tag-unknown";
+    const conf = face.confidence ? ` ${Math.round(face.confidence * 100)}%` : "";
+    li.textContent = face.name ? `${face.name}${conf}` : "Unknown";
+    facesEl.appendChild(li);
+  }
+}
+
+function clearFaceBoxes() {
+  if (!faceOverlayCanvas) return;
+  const ctx = faceOverlayCanvas.getContext("2d");
+  ctx.clearRect(0, 0, faceOverlayCanvas.width, faceOverlayCanvas.height);
+  faceOverlayCanvas.classList.remove("visible");
+}
+
+function drawFaceBoxes(faces) {
+  if (!faceOverlayCanvas || !video.videoWidth) return;
+
+  const dW = video.clientWidth;
+  const dH = video.clientHeight;
+  const nW = video.videoWidth;
+  const nH = video.videoHeight;
+
+  faceOverlayCanvas.width  = dW;
+  faceOverlayCanvas.height = dH;
+
+  // Account for object-fit: cover crop
+  const scale = Math.max(dW / nW, dH / nH);
+  const offsetX = (nW - dW / scale) / 2;
+  const offsetY = (nH - dH / scale) / 2;
+
+  const ctx = faceOverlayCanvas.getContext("2d");
+  ctx.clearRect(0, 0, dW, dH);
+
+  for (const face of faces) {
+    const box = face.box;
+    if (!box) continue;
+    const x = (box.x1 - offsetX) * scale;
+    const y = (box.y1 - offsetY) * scale;
+    const w = box.w * scale;
+    const h = box.h * scale;
+
+    const color = face.name ? "#38bdf8" : "#f87171";
+    ctx.strokeStyle = color;
+    ctx.lineWidth = 2.5;
+    ctx.strokeRect(x, y, w, h);
+
+    if (face.name) {
+      ctx.font = "bold 13px system-ui, sans-serif";
+      const label = face.name + (face.confidence ? ` ${Math.round(face.confidence * 100)}%` : "");
+      const textY = y > 20 ? y - 6 : y + h + 16;
+      ctx.fillStyle = "rgba(0,0,0,0.55)";
+      ctx.fillRect(x, textY - 13, ctx.measureText(label).width + 8, 18);
+      ctx.fillStyle = color;
+      ctx.fillText(label, x + 4, textY);
+    }
+  }
+  faceOverlayCanvas.classList.add("visible");
+  // Auto-clear after 6 seconds
+  setTimeout(clearFaceBoxes, 6000);
+}
+
+function playBase64Audio(b64) {
+  try {
+    const bytes = Uint8Array.from(atob(b64), c => c.charCodeAt(0));
+    const blob  = new Blob([bytes], { type: "audio/mpeg" });
+    const url   = URL.createObjectURL(blob);
+    audioPlayer.src = url;
+    audioPlayer.classList.remove("hidden");
+    audioPlayer.play().catch(() => {});
+    audioPlayer.onended = () => URL.revokeObjectURL(url);
+  } catch (e) {
+    console.error("[Audio] playback error:", e);
+  }
 }
 
 async function startCamera() {

@@ -49,6 +49,7 @@
           <p>Tap Start Camera to begin</p>
         </div>
         <div class="scan-ring" id="scanRing"></div>
+        <canvas id="faceOverlayCanvas" aria-hidden="true"></canvas>
       </section>
 
       <!-- Action buttons -->
@@ -99,6 +100,11 @@
         <div class="result-section">
           <span class="result-label">Detected Objects</span>
           <ul class="tag-list" id="objects"></ul>
+        </div>
+        <div class="divider"></div>
+        <div class="result-section">
+          <span class="result-label">Detected Faces</span>
+          <ul class="tag-list" id="detectedFaces"></ul>
         </div>
         <div class="divider"></div>
         <div class="result-section">
@@ -172,7 +178,7 @@
     <script src="/static/guide.js?v=1" defer></script>
     <script src="/static/voice.js?v=8" defer></script>
     <script src="/static/navigation.js?v=3" defer></script>
-    <script src="/static/app.js?v=11" defer></script>
+    <script src="/static/app.js?v=12" defer></script>
     <script>
       (async function () {
         try {

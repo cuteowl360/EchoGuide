@@ -116,3 +116,74 @@ def identify_person(frame_bgr: np.ndarray, tolerance: float = 0.55) -> Dict[str,
         "confidence": confidence,
         "text": name,
     }
+
+
+def identify_all_persons(frame_bgr: np.ndarray, tolerance: float = 0.55) -> Dict[str, Any]:
+    """Detect and identify ALL visible faces in the frame.
+
+    Returns count, per-face results (name, confidence, bounding box), and a
+    natural-language spoken summary describing how many people are visible and
+    who they are.
+    """
+    global _last_recognized_name
+
+    faces = extract_face_encodings(frame_bgr)
+    if not faces:
+        return {
+            "faces": [],
+            "count": 0,
+            "known_names": [],
+            "text": "I could not detect any faces in view.",
+        }
+
+    results: List[Dict[str, Any]] = []
+    for face in faces:
+        match = find_match(face["encoding"], tolerance=tolerance)
+        name = match[0] if match else None
+        confidence = match[1] if match else None
+        results.append(
+            {
+                "name": name,
+                "confidence": confidence,
+                "box": face["box"],
+            }
+        )
+
+    # Update last-recognized from the largest face
+    best = _largest_face(faces)
+    if best:
+        try:
+            best_idx = faces.index(best)
+            best_name = results[best_idx].get("name")
+            if best_name:
+                _last_recognized_name = best_name
+        except Exception:
+            pass
+
+    known: List[str] = [r["name"] for r in results if r["name"]]
+    unknown_count = sum(1 for r in results if not r["name"])
+    total = len(results)
+
+    # Build natural-language summary
+    if total == 1:
+        if known:
+            text = f"I can see 1 person: {known[0]}."
+        else:
+            text = "I can see 1 person, but I don't recognise them."
+    else:
+        parts: List[str] = []
+        if known:
+            parts.append(", ".join(known))
+        if unknown_count == 1:
+            parts.append("1 unknown person")
+        elif unknown_count > 1:
+            parts.append(f"{unknown_count} unknown people")
+        people_str = " and ".join(parts) if parts else "some people"
+        text = f"I can see {total} people: {people_str}."
+
+    return {
+        "faces": results,
+        "count": total,
+        "known_names": known,
+        "text": text,
+    }

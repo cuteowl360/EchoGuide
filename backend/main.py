@@ -25,6 +25,7 @@ from .person_memory import (
     face_lib_available,
     get_last_recognized,
     identify_person as identify_person_from_frame,
+    identify_all_persons as identify_all_persons_from_frame,
     remember_person as remember_person_from_frame,
 )
 from .vision import detect_objects, model_is_available, summarize_objects
@@ -367,6 +368,43 @@ async def identify_person(image: UploadFile = File(...)) -> Dict[str, Any]:
     except Exception:
         logger.exception("identify_person failed")
         raise HTTPException(status_code=500, detail="Unable to identify person.")
+
+
+@app.post("/identify_all_persons")
+async def identify_all_persons_endpoint(image: UploadFile = File(...)) -> Dict[str, Any]:
+    """Identify ALL faces in the frame — returns count, names, bounding boxes, and TTS audio."""
+    if not face_lib_available():
+        raise HTTPException(status_code=503, detail="Face recognition is not available. Install face_recognition.")
+    if image.content_type and not image.content_type.startswith("image/"):
+        raise HTTPException(status_code=400, detail="Only image uploads are supported.")
+
+    image_bytes = await image.read()
+    if not image_bytes:
+        raise HTTPException(status_code=400, detail="No image uploaded.")
+    frame = _decode_frame(image_bytes)
+
+    try:
+        result = await asyncio.to_thread(identify_all_persons_from_frame, frame)
+    except Exception:
+        logger.exception("identify_all_persons failed")
+        raise HTTPException(status_code=500, detail="Unable to identify people.")
+
+    text = result.get("text", "")
+    audio_b64: Optional[str] = None
+    if tts_is_available() and text:
+        audio_bytes = await asyncio.to_thread(synthesize_speech, text)
+        if audio_bytes:
+            audio_b64 = base64.b64encode(audio_bytes).decode("utf-8")
+
+    return {
+        "status": "ok",
+        "mode": "identify_all_persons",
+        "count": result.get("count", 0),
+        "faces": result.get("faces", []),
+        "known_names": result.get("known_names", []),
+        "text": text,
+        "audio_base64": audio_b64,
+    }
 
 
 @app.get("/last_person")
