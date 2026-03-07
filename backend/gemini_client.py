@@ -178,6 +178,8 @@ Intents:
 - stop_navigation   → user wants to cancel / stop navigation
 - start_camera      → user wants to turn on / open the camera
 - stop_camera       → user wants to turn off / close the camera
+- start_guide       → user wants to start / activate guide mode / walking assistant
+- stop_guide        → user wants to stop / exit guide mode
 - help              → user wants to know what commands are available
 - unknown           → cannot determine intent
 
@@ -196,6 +198,9 @@ Examples:
 "stop" → {{"intent":"stop_navigation","params":{{}}}}
 "turn on camera" → {{"intent":"start_camera","params":{{}}}}
 "activate camera" → {{"intent":"start_camera","params":{{}}}}
+"start guide mode" → {{"intent":"start_guide","params":{{}}}}
+"help me walk, turn on guide" → {{"intent":"start_guide","params":{{}}}}
+"stop guide mode" → {{"intent":"stop_guide","params":{{}}}}
 
 Return ONLY the JSON object. No explanation.
 """
@@ -243,4 +248,78 @@ async def interpret_voice(phrase: str) -> dict:
         print(f"[interpret_voice] ERROR: {e}")
         traceback.print_exc()
         return {"intent": "unknown", "params": {}}
+
+
+# ── Guide Mode ────────────────────────────────────────────────────────────────
+
+_GUIDE_PROMPT = """You are a real-time walking assistant for a blind person outdoors.
+
+Analyze this camera image and give ONE short navigation instruction (max 15 words).
+
+Priority rules (apply the FIRST matching rule):
+1. Moving vehicle / car / bike heading toward person → {"guidance": "STOP — vehicle approaching", "is_danger": true}
+2. Stairs going down / ledge / drop → {"guidance": "STEP DOWN — stairs ahead", "is_danger": true}
+3. Large obstacle blocking path → {"guidance": "MOVE LEFT — obstacle" or "MOVE RIGHT — obstacle", "is_danger": true}
+4. Red traffic light / signal → {"guidance": "STOP — red light", "is_danger": true}
+5. Clear path ahead → {"guidance": "Path clear, continue forward", "is_danger": false}
+6. Crosswalk / intersection → {"guidance": "Crosswalk ahead, wait for signal", "is_danger": false}
+7. Door / entrance → {"guidance": "Door ahead on your left", "is_danger": false}
+8. Narrow passage → {"guidance": "Narrow path, slow down", "is_danger": false}
+
+Respond ONLY with a JSON object. No markdown, no explanation."""
+
+
+async def guide_scan_frame(frame_bgr) -> Dict[str, Any]:
+    """
+    Analyze a camera frame for walking hazards using Gemini Vision.
+    Returns {"guidance": str, "is_danger": bool}.
+    """
+    api_key = os.getenv("GEMINI_API_KEY", "").strip()
+    if not api_key:
+        return {"guidance": "Guide mode unavailable — no API key.", "is_danger": False}
+
+    import cv2
+    _, encoded = cv2.imencode(".jpg", frame_bgr, [cv2.IMWRITE_JPEG_QUALITY, 70])
+    img_b64 = base64.b64encode(encoded.tobytes()).decode("utf-8")
+
+    # Use a fast/cheap model for the real-time loop
+    model_name = os.getenv("GEMINI_GUIDE_MODEL", os.getenv("GEMINI_MODEL", "gemini-2.0-flash-lite"))
+
+    if genai_new is not None:
+        def _call() -> str:
+            client = genai_new.Client(api_key=api_key)
+            response = client.models.generate_content(
+                model=model_name,
+                contents=[{
+                    "parts": [
+                        {"text": _GUIDE_PROMPT},
+                        {"inline_data": {"mime_type": "image/jpeg", "data": img_b64}},
+                    ]
+                }],
+                config={"max_output_tokens": 80, "temperature": 0.1},
+            )
+            return (response.text or "").strip()
+    elif genai is not None:
+        def _call() -> str:
+            genai.configure(api_key=api_key)
+            model = genai.GenerativeModel(model_name)
+            response = model.generate_content(
+                [_GUIDE_PROMPT, {"mime_type": "image/jpeg", "data": img_b64}],
+                generation_config={"max_output_tokens": 80, "temperature": 0.1},
+            )
+            return getattr(response, "text", "").strip()
+    else:
+        return {"guidance": "Gemini SDK not available.", "is_danger": False}
+
+    try:
+        raw = await asyncio.to_thread(_call)
+        raw = raw.strip().lstrip("```json").lstrip("```").rstrip("```").strip()
+        result = json.loads(raw)
+        return {
+            "guidance": str(result.get("guidance", "Continue forward.")),
+            "is_danger": bool(result.get("is_danger", False)),
+        }
+    except Exception as e:
+        print(f"[guide_scan_frame] ERROR: {e}")
+        return {"guidance": "Continue with caution.", "is_danger": False}
 

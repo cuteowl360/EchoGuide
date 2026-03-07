@@ -195,6 +195,10 @@ class VoiceCommander {
 
   // Broad keyword fallback — used when Gemini is unavailable or returns unknown
   _keywordFallback(phrase) {
+    if (/\bguide\b/.test(phrase) && /\b(start|begin|on|activate)\b/.test(phrase))
+      return { intent: "start_guide", params: {} };
+    if (/\bguide\b/.test(phrase) && /\b(stop|end|off|exit)\b/.test(phrase))
+      return { intent: "stop_guide", params: {} };
     if (/\b(scan|describe|look|see|around|front|surroundings)\b/.test(phrase))
       return { intent: "scan_scene", params: {} };
     if (/\b(read|text|sign|written|label)\b/.test(phrase))
@@ -242,6 +246,12 @@ class VoiceCommander {
       return { intent: "start_camera", params: {} };
     if (/\b(stop|close|turn off|disable)\b.*\bcamera\b|\bcamera\b.*\b(stop|off)\b/.test(cmd))
       return { intent: "stop_camera", params: {} };
+
+    // Guide Mode
+    if (/\b(start|begin|activate|enable|turn on)\b.*\bguide\b|\bguide\b.*(mode|on|start)/.test(cmd) || /^guide\s*mode?$/.test(cmd))
+      return { intent: "start_guide", params: {} };
+    if (/\b(stop|end|exit|deactivate|disable|turn off)\b.*\bguide\b|\bguide\b.*(off|stop|end)/.test(cmd))
+      return { intent: "stop_guide", params: {} };
 
     // Navigate — extract destination
     const navMatch = cmd.match(/\b(?:navigate|go|take me|directions?|how do i get)\b.*?\bto\b\s+([\w\s,]+?)(?:\s*$|\s*please)/i);

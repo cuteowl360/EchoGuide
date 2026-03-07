@@ -816,3 +816,84 @@ audio.hidden { display: none; }
   from { opacity: 0; transform: translateY(20px); }
   to   { opacity: 1; transform: translateY(0); }
 }
+
+/* ── Guide Mode ──────────────────────────────────────────────────────────── */
+
+/* Guide Mode button — amber/orange */
+.btn-guide {
+  background: linear-gradient(135deg, rgba(251,146,60,0.18), rgba(245,158,11,0.28));
+  border-color: rgba(251,146,60,0.35);
+  color: #fbbf24;
+}
+.btn-guide:hover:not(:disabled) {
+  background: linear-gradient(135deg, rgba(251,146,60,0.28), rgba(245,158,11,0.38));
+  box-shadow: 0 0 18px rgba(251,146,60,0.3);
+}
+.btn-guide.active {
+  background: linear-gradient(135deg, rgba(251,146,60,0.4), rgba(245,158,11,0.5));
+  border-color: rgba(251,146,60,0.7);
+  box-shadow: 0 0 24px rgba(251,146,60,0.45);
+  animation: guidePulseBtn 2s ease-in-out infinite;
+}
+@keyframes guidePulseBtn {
+  0%, 100% { box-shadow: 0 0 24px rgba(251,146,60,0.45); }
+  50%       { box-shadow: 0 0 38px rgba(251,146,60,0.75); }
+}
+
+/* Guide panel */
+.guide-panel { border-color: rgba(251,146,60,0.3); }
+.guide-panel.danger { border-color: rgba(248,113,113,0.7); animation: dangerFlash 0.4s ease 3; }
+
+@keyframes dangerFlash {
+  0%, 100% { background: var(--glass-bg); }
+  50%       { background: rgba(220, 38, 38, 0.18); }
+}
+
+.guide-header { display: flex; flex-direction: column; gap: 6px; }
+
+.guide-title-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.guide-pulse {
+  width: 10px; height: 10px;
+  border-radius: 50%;
+  background: #fbbf24;
+  animation: guideDot 1.4s ease-in-out infinite;
+  flex-shrink: 0;
+}
+@keyframes guideDot {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50%       { opacity: 0.4; transform: scale(0.7); }
+}
+
+.guide-hint { font-size: 0.8rem; color: var(--text-muted); margin: 0; }
+
+.guide-guidance {
+  font-size: 1.25rem;
+  font-weight: 600;
+  color: var(--accent-frost);
+  line-height: 1.4;
+  transition: color 0.3s ease;
+}
+.guide-panel.danger .guide-guidance { color: #fca5a5; }
+
+/* Danger banner */
+.guide-danger-banner {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  background: rgba(220, 38, 38, 0.22);
+  border: 1px solid rgba(248,113,113,0.5);
+  border-radius: var(--r-sm);
+  padding: 10px 14px;
+  color: #fca5a5;
+  font-weight: 700;
+  font-size: 1.1rem;
+  letter-spacing: 0.04em;
+  margin-top: 2px;
+}
+.guide-danger-banner.hidden { display: none; }
+

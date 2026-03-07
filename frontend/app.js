@@ -339,6 +339,65 @@ navStopBtn.addEventListener("click", () => {
   if (candidatesEl) { candidatesEl.innerHTML = ""; candidatesEl.classList.add("hidden"); }
 });
 
+// ── Guide Mode ────────────────────────────────────────────────────────────────
+const guideModeBtn      = document.getElementById("guideModeBtn");
+const guidePanel        = document.getElementById("guidePanel");
+const guideGuidanceEl   = document.getElementById("guideGuidance");
+const guideDangerBanner = document.getElementById("guideDangerBanner");
+const guideDangerText   = document.getElementById("guideDangerText");
+
+const guideMode = new GuideMode(video, canvas, {
+  intervalMs: 2000,
+  onGuidance: (text, isDanger) => {
+    guideGuidanceEl.textContent = text;
+    if (isDanger) {
+      guidePanel.classList.add("danger");
+      guideDangerBanner.classList.remove("hidden");
+      guideDangerText.textContent = text;
+      setStatus(`⚠ ${text}`, "error");
+      // Auto-clear danger highlight after 3s
+      setTimeout(() => {
+        guidePanel.classList.remove("danger");
+        guideDangerBanner.classList.add("hidden");
+      }, 3000);
+    } else {
+      guidePanel.classList.remove("danger");
+      guideDangerBanner.classList.add("hidden");
+      setStatus(`Guide: ${text}`);
+    }
+  },
+  onStateChange: (active) => {
+    if (active) {
+      guideModeBtn.classList.add("active");
+      guideModeBtn.querySelector(".btn-label").textContent = "Stop Guide";
+      guidePanel.classList.remove("hidden");
+      guideGuidanceEl.textContent = "Starting scan…";
+    } else {
+      guideModeBtn.classList.remove("active");
+      guideModeBtn.querySelector(".btn-label").textContent = "Guide Mode";
+      guidePanel.classList.add("hidden");
+      setStatus("Guide Mode stopped.");
+    }
+  },
+});
+
+guideModeBtn.addEventListener("click", async () => {
+  if (guideMode.active) {
+    guideMode.stop();
+    return;
+  }
+  // Ensure camera is on before starting
+  if (!stream) {
+    setStatus("Starting camera for Guide Mode…", "working");
+    try { await startCamera(); } catch (_) {}
+    await new Promise(r => setTimeout(r, 600));
+  }
+  speakFallback("Guide Mode activated.");
+  guideMode.start();
+});
+
+
+
 // ── Voice commands ────────────────────────────────────────────────────────────
 const voicePill  = document.getElementById("voicePill");
 const voiceLabel = document.getElementById("voiceLabel");
@@ -435,6 +494,18 @@ function handleVoiceCommand(type, params) {
       if (stopCandidatesEl) { stopCandidatesEl.innerHTML = ""; stopCandidatesEl.classList.add("hidden"); }
       break;
     }
+
+    case "start_guide":
+      setStatus("Echo: starting Guide Mode…");
+      speakFallback("Guide Mode activated.");
+      guideModeBtn.click();
+      break;
+
+    case "stop_guide":
+      setStatus("Echo: stopping Guide Mode.");
+      speakFallback("Guide Mode stopped.");
+      if (guideMode.active) guideMode.stop();
+      break;
 
     case "help":
       setStatus("Echo: showing voice command help.");

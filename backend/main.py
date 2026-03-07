@@ -8,7 +8,7 @@ import logging
 import os
 from io import BytesIO
 from pathlib import Path
-from typing import Any, Dict, List, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 import asyncio
 import cv2
@@ -19,7 +19,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 
 from .elevenlabs_client import is_available as tts_is_available, synthesize_speech
-from .gemini_client import describe_scene, interpret_voice, is_available as gemini_is_available
+from .gemini_client import describe_scene, interpret_voice, guide_scan_frame, is_available as gemini_is_available
 from .ocr import ocr_is_available, recognize_text
 from .person_memory import (
     face_lib_available,
@@ -515,5 +515,43 @@ async def navigate_scan_obstacles(req: NavObstacleRequest) -> Dict[str, Any]:
         "current_step": req.current_step,
         "obstacles": obstacles,
         "announcement": announcement,
+        "audio_base64": audio_b64,
+    }
+
+
+# ── Guide Mode ────────────────────────────────────────────────────────────────
+
+@app.post("/guide/scan")
+async def guide_scan(image: UploadFile = File(...)) -> Dict[str, Any]:
+    """
+    Guide Mode real-time loop endpoint.
+    Accepts a camera frame, runs Gemini Vision hazard detection,
+    returns guidance text + ElevenLabs audio (base64 mp3).
+    Called by the frontend every 2 seconds while Guide Mode is active.
+    """
+    if image.content_type and not image.content_type.startswith("image/"):
+        raise HTTPException(status_code=400, detail="Image file required.")
+
+    image_bytes = await image.read()
+    if not image_bytes:
+        raise HTTPException(status_code=400, detail="Empty image.")
+
+    frame = _decode_frame(image_bytes)
+
+    # Gemini Vision hazard detection
+    result = await guide_scan_frame(frame)
+    guidance: str  = result["guidance"]
+    is_danger: bool = result["is_danger"]
+
+    # ElevenLabs TTS
+    audio_b64: Optional[str] = None
+    if tts_is_available():
+        audio_bytes = await asyncio.to_thread(synthesize_speech, guidance)
+        if audio_bytes:
+            audio_b64 = base64.b64encode(audio_bytes).decode("utf-8")
+
+    return {
+        "guidance":    guidance,
+        "is_danger":   is_danger,
         "audio_base64": audio_b64,
     }
