@@ -20,7 +20,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 
 from .elevenlabs_client import is_available as tts_is_available, synthesize_speech
-from .gemini_client import describe_scene, interpret_voice, guide_scan_frame, is_available as gemini_is_available
+from .gemini_client import describe_scene, interpret_voice, is_available as gemini_is_available
 from .ocr import ocr_is_available, recognize_text
 from .person_memory import (
     face_lib_available,
@@ -125,6 +125,154 @@ def _run_analysis(frame: np.ndarray) -> Tuple[List[Dict[str, Any]], Dict[str, An
     detections = detect_objects(frame)
     ocr_result = recognize_text(frame)
     return detections, ocr_result
+
+
+# ── Guide Mode helpers/state ──────────────────────────────────────────────
+GUIDE_REAL_OBJECT_WIDTH_M = 0.5
+GUIDE_FOCAL_LENGTH = 600
+GUIDE_DANGER_ZONE_M = 1.0
+GUIDE_MESSAGE_SWITCH_M = 2.0
+
+_guide_mode_state = {
+    "obstacle_signature": None,
+    "initial_message_spoken": False,
+    "danger_message_spoken": False,
+    "last_distance_m": None,
+}
+
+
+def _estimate_distance(bbox_width: float) -> Optional[float]:
+    if not bbox_width or bbox_width <= 0:
+        return None
+    distance = (GUIDE_REAL_OBJECT_WIDTH_M * GUIDE_FOCAL_LENGTH) / bbox_width
+    return round(distance, 2)
+
+
+def _estimate_direction(center_x: float, frame_width: int) -> str:
+    if frame_width <= 0:
+        return "center"
+    if center_x < frame_width * 0.33:
+        return "left"
+    if center_x > frame_width * 0.66:
+        return "right"
+    return "center"
+
+
+def _normalize_bbox(item: Dict[str, Any]) -> Optional[tuple[int, int, int, int]]:
+    bbox = item.get("bbox")
+    if not isinstance(bbox, dict):
+        return None
+
+    try:
+        x1 = int(bbox.get("x1", 0))
+        y1 = int(bbox.get("y1", 0))
+        x2 = int(bbox.get("x2", x1))
+        y2 = int(bbox.get("y2", y1))
+    except (TypeError, ValueError):
+        return None
+
+    if x2 < x1 or y2 < y1:
+        return None
+    return (x1, y1, x2, y2)
+
+
+def _obstacle_signature(label: str, bbox: tuple[int, int, int, int]) -> str:
+    x1, y1, x2, y2 = bbox
+    return f"{label}|{x1}:{y1}:{x2}:{y2}"
+
+
+def _select_primary_obstacle(detections: List[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+    primary_item: Optional[Dict[str, Any]] = None
+    max_width = 0
+
+    for item in detections:
+        bbox = _normalize_bbox(item)
+        if not bbox:
+            continue
+        x1, _, x2, _ = bbox
+        width = x2 - x1
+        if width <= 0:
+            continue
+        if width > max_width:
+            max_width = width
+            primary_item = item
+    return primary_item
+
+
+def _build_guide_guidance(distance_m: float, direction: str) -> str:
+    if distance_m >= GUIDE_MESSAGE_SWITCH_M:
+        return f"Obstacle ahead {distance_m} meters."
+    return f"Obstacle {distance_m} meters ahead. Move {direction}."
+
+
+def _maybe_reset_guide_state_for_lost_obstacle() -> None:
+    _guide_mode_state["obstacle_signature"] = None
+    _guide_mode_state["initial_message_spoken"] = False
+    _guide_mode_state["danger_message_spoken"] = False
+    _guide_mode_state["last_distance_m"] = None
+
+
+def _build_guide_message(frame: np.ndarray, detections: List[Dict[str, Any]]) -> tuple[str, bool]:
+    if not detections:
+        _maybe_reset_guide_state_for_lost_obstacle()
+        return "", False
+
+    frame_width = int(frame.shape[1] or 0)
+    primary = _select_primary_obstacle(detections)
+    if not primary:
+        _maybe_reset_guide_state_for_lost_obstacle()
+        return "", False
+
+    bbox = _normalize_bbox(primary)
+    if not bbox:
+        _maybe_reset_guide_state_for_lost_obstacle()
+        return "", False
+
+    x1, y1, x2, y2 = bbox
+    bbox_width = x2 - x1
+    distance_m = _estimate_distance(float(bbox_width))
+    if distance_m is None:
+        _maybe_reset_guide_state_for_lost_obstacle()
+        return "", False
+
+    center_x = (x1 + x2) / 2
+    direction = _estimate_direction(center_x, frame_width)
+    obstacle_label = str(primary.get("label", "obstacle")).strip() or "obstacle"
+    signature = _obstacle_signature(obstacle_label, (x1, y1, x2, y2))
+
+    if signature != _guide_mode_state["obstacle_signature"]:
+        _guide_mode_state["obstacle_signature"] = signature
+        _guide_mode_state["initial_message_spoken"] = False
+        _guide_mode_state["danger_message_spoken"] = False
+
+    initial_message_spoken = _guide_mode_state["initial_message_spoken"]
+    danger_message_spoken = _guide_mode_state["danger_message_spoken"]
+    previous_distance = _guide_mode_state["last_distance_m"]
+
+    guidance: Optional[str] = None
+    is_danger = False
+
+    if not initial_message_spoken:
+        guidance = _build_guide_guidance(distance_m, direction)
+        _guide_mode_state["initial_message_spoken"] = True
+
+    # Warning only when entering danger zone.
+    if distance_m < GUIDE_DANGER_ZONE_M and not danger_message_spoken:
+        if previous_distance is None or previous_distance >= GUIDE_DANGER_ZONE_M:
+            if guidance is None:
+                guidance = "Warning. You are now in the danger zone for this obstacle."
+            else:
+                guidance = f"{guidance} Warning. You are now in the danger zone for this obstacle."
+            _guide_mode_state["danger_message_spoken"] = True
+            is_danger = True
+
+    # If no guidance message this frame, keep silent.
+    if guidance is None:
+        _guide_mode_state["last_distance_m"] = distance_m
+        return "", is_danger
+
+    _guide_mode_state["last_distance_m"] = distance_m
+    return guidance, is_danger
 
 
 @app.get("/health")
@@ -607,13 +755,11 @@ async def guide_scan(image: UploadFile = File(...)) -> Dict[str, Any]:
             max_objects=yolo_max,
         )
 
-    result = await guide_scan_frame(frame, detections=detections)
-    guidance: str  = result["guidance"]
-    is_danger: bool = result["is_danger"]
+    guidance, is_danger = _build_guide_message(frame, detections)
 
     # ElevenLabs TTS
     audio_b64: Optional[str] = None
-    if tts_is_available():
+    if guidance and tts_is_available():
         audio_bytes = await asyncio.to_thread(synthesize_speech, guidance)
         if audio_bytes:
             audio_b64 = base64.b64encode(audio_bytes).decode("utf-8")
