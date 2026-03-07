@@ -578,15 +578,35 @@ document.getElementById("voicePill").addEventListener("click", () => {
 });
 
 window.addEventListener("load", () => {
-  if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
-    setStatus("Camera is not supported in this browser.");
+  const overlay    = document.getElementById("startupOverlay");
+  const startupBtn = document.getElementById("startupBtn");
+
+  // Detect plain-HTTP on a non-localhost origin (Chrome blocks camera/mic here)
+  const isInsecure = location.protocol === "http:" &&
+                     location.hostname !== "localhost" &&
+                     location.hostname !== "127.0.0.1";
+
+  if (isInsecure) {
+    // Update overlay to show a clear message instead of being stuck
+    const card = overlay.querySelector(".startup-card p");
+    if (card) card.textContent = "Camera & mic require a secure connection. Open this page on the server as http://localhost:8000 instead.";
+    const btn = overlay.querySelector(".startup-btn");
+    if (btn) btn.textContent = "OK";
+    overlay.addEventListener("click", () => overlay.classList.add("hidden"));
+    startupBtn.addEventListener("click", (e) => { e.stopPropagation(); overlay.classList.add("hidden"); });
+    setStatus("Use http://localhost:8000 — camera requires HTTPS or localhost.", "error");
     startBtn.disabled = true;
     setActionState(true);
     return;
   }
 
-  const overlay   = document.getElementById("startupOverlay");
-  const startupBtn = document.getElementById("startupBtn");
+  if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+    setStatus("Camera is not supported in this browser.");
+    overlay.classList.add("hidden");
+    startBtn.disabled = true;
+    setActionState(true);
+    return;
+  }
 
   function _dismissOverlay() {
     overlay.classList.add("hidden");
