@@ -453,7 +453,7 @@ function _startVoice() {
       speakFallback("Yes?");
     } else if (state === "thinking") {
       voicePill.className = "voice-pill activated";
-      voiceLabel.textContent = "Processing\u2026";
+      voiceLabel.textContent = "Processing…";
     } else if (state === "error") {
       voicePill.className = "voice-pill error";
       voiceLabel.textContent = "Mic blocked";
@@ -462,11 +462,16 @@ function _startVoice() {
       voiceLabel.textContent = "Voice off";
     }
   }, (transcript) => {
-    // Show every transcript briefly in the status bar so user knows mic is working
     setStatus(`Heard: "${transcript}"`);
   });
   if (ok) _voiceStarted = true;
 }
+
+// Tap the voice pill to retry mic if it failed
+document.getElementById("voicePill").addEventListener("click", () => {
+  _voiceStarted = false;
+  _startVoice();
+});
 
 window.addEventListener("load", () => {
   if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
@@ -475,13 +480,26 @@ window.addEventListener("load", () => {
     setActionState(true);
     return;
   }
-  setStatus("Press Start Camera to begin.");
 
-  if (voiceCommander.supported) {
-    // Try immediately — works if mic permission was already granted
+  const overlay   = document.getElementById("startupOverlay");
+  const startupBtn = document.getElementById("startupBtn");
+
+  function _dismissOverlay() {
+    overlay.classList.add("hidden");
+    // Start camera immediately on the user gesture
+    startCamera();
+    // Start mic on the same gesture — guaranteed to work
     _startVoice();
-  } else {
+    setStatus('Camera and mic active. Say "Echo" to give a command.');
+  }
+
+  // Both the button and clicking anywhere on the overlay work
+  startupBtn.addEventListener("click", (e) => { e.stopPropagation(); _dismissOverlay(); });
+  overlay.addEventListener("click", _dismissOverlay);
+
+  if (!voiceCommander.supported) {
     voicePill.className = "voice-pill error";
     voiceLabel.textContent = "Voice unsupported";
   }
 });
+

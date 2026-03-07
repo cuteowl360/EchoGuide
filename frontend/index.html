@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
     <title>EchoGuide</title>
     <meta name="description" content="AI vision assistant for the visually impaired." />
-    <link rel="stylesheet" href="/static/style.css?v=4" />
+    <link rel="stylesheet" href="/static/style.css?v=5" />
   </head>
   <body>
     <main class="app-shell">
@@ -129,9 +129,19 @@
 
     </main>
 
+    <!-- Startup overlay: one tap grants camera + mic and removes this screen -->
+    <div id="startupOverlay" class="startup-overlay">
+      <div class="startup-card glass">
+        <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="rgba(186,230,253,0.9)" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2a7 7 0 0 1 7 7c0 3-1.5 5-4 6.5V18a1 1 0 0 1-1 1h-4a1 1 0 0 1-1-1v-2.5C6.5 14 5 12 5 9a7 7 0 0 1 7-7z"/><line x1="9" y1="21" x2="15" y2="21"/></svg>
+        <h2>EchoGuide</h2>
+        <p>Tap anywhere to start camera &amp; microphone</p>
+        <button id="startupBtn" class="btn btn-start startup-btn">Tap to Start</button>
+      </div>
+    </div>
+
     <script src="/static/voice.js?v=4" defer></script>
     <script src="/static/navigation.js?v=3" defer></script>
-    <script src="/static/app.js?v=5" defer></script>
+    <script src="/static/app.js?v=6" defer></script>
     <script>
       (async function () {
         try {
