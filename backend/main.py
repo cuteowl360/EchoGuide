@@ -212,28 +212,31 @@ def _maybe_reset_guide_state_for_lost_obstacle() -> None:
     _guide_mode_state["last_distance_m"] = None
 
 
-def _build_guide_message(frame: np.ndarray, detections: List[Dict[str, Any]]) -> tuple[str, bool]:
+def _build_guide_message(
+    frame: np.ndarray,
+    detections: List[Dict[str, Any]],
+) -> tuple[Optional[float], Optional[str], Optional[str], bool]:
     if not detections:
         _maybe_reset_guide_state_for_lost_obstacle()
-        return "", False
+        return None, None, None, False
 
     frame_width = int(frame.shape[1] or 0)
     primary = _select_primary_obstacle(detections)
     if not primary:
         _maybe_reset_guide_state_for_lost_obstacle()
-        return "", False
+        return None, None, None, False
 
     bbox = _normalize_bbox(primary)
     if not bbox:
         _maybe_reset_guide_state_for_lost_obstacle()
-        return "", False
+        return None, None, None, False
 
     x1, y1, x2, y2 = bbox
     bbox_width = x2 - x1
     distance_m = _estimate_distance(float(bbox_width))
     if distance_m is None:
         _maybe_reset_guide_state_for_lost_obstacle()
-        return "", False
+        return None, None, None, False
 
     center_x = (x1 + x2) / 2
     direction = _estimate_direction(center_x, frame_width)
@@ -266,13 +269,12 @@ def _build_guide_message(frame: np.ndarray, detections: List[Dict[str, Any]]) ->
             _guide_mode_state["danger_message_spoken"] = True
             is_danger = True
 
-    # If no guidance message this frame, keep silent.
     if guidance is None:
         _guide_mode_state["last_distance_m"] = distance_m
-        return "", is_danger
+        return distance_m, direction, None, is_danger
 
     _guide_mode_state["last_distance_m"] = distance_m
-    return guidance, is_danger
+    return distance_m, direction, guidance, is_danger
 
 
 @app.get("/health")
@@ -701,7 +703,7 @@ async def guide_scan(image: UploadFile = File(...)) -> Dict[str, Any]:
     """
     Guide Mode real-time loop endpoint.
     Accepts a camera frame, runs Gemini Vision hazard detection,
-    returns guidance text + ElevenLabs audio (base64 mp3).
+    returns concise guidance metadata for client-side speech.
     Called by the frontend every 2 seconds while Guide Mode is active.
     """
     if image.content_type and not image.content_type.startswith("image/"):
@@ -755,27 +757,22 @@ async def guide_scan(image: UploadFile = File(...)) -> Dict[str, Any]:
             max_objects=yolo_max,
         )
 
-    guidance, is_danger = _build_guide_message(frame, detections)
-
-    # ElevenLabs TTS
-    audio_b64: Optional[str] = None
-    if guidance and tts_is_available():
-        audio_bytes = await asyncio.to_thread(synthesize_speech, guidance)
-        if audio_bytes:
-            audio_b64 = base64.b64encode(audio_bytes).decode("utf-8")
+    distance_m, direction, message, is_danger = _build_guide_message(frame, detections)
 
     logger.info(
-        "[guide] scan end id=%s detections=%s danger=%s guidance=%s audio=%s",
+        "[guide] scan end id=%s detections=%s danger=%s distance=%s direction=%s message=%s",
         request_id,
         len(detections),
         is_danger,
-        guidance,
-        bool(audio_b64),
+        distance_m,
+        direction,
+        message,
     )
 
     return {
-        "guidance":    guidance,
+        "distance":    distance_m,
+        "direction":   direction,
+        "message":     message,
         "is_danger":   is_danger,
         "detection_count": len(detections),
-        "audio_base64": audio_b64,
     }

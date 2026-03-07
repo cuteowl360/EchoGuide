@@ -2,7 +2,7 @@
  * EchoGuide — Guide Mode
  *
  * Captures a camera frame every 2 seconds, sends to /guide/scan,
- * and speaks back navigation guidance via ElevenLabs TTS.
+ * and speaks back navigation guidance via Web Speech API.
  *
  * DANGER responses ("STOP", "STEP DOWN", "MOVE LEFT/RIGHT") immediately
  * interrupt any current audio for maximum safety.
@@ -17,13 +17,8 @@ class GuideMode {
     this._timer    = null;
     this._active   = false;
     this._busy     = false;          // prevent overlapping requests
-    this._curAudio = null;           // currently playing Audio element
     this._scanCount = 0;
-    this._lastSpokenAt = 0;
-    this._announceIntervalMs = Number.isFinite(Number(options.guideAnnouncementIntervalMs))
-      ? Number(options.guideAnnouncementIntervalMs)
-      : 2000;
-    this._announceIntervalMs = Math.max(2000, Number(this._announceIntervalMs));
+    this._lastMessage = null;
 
     // Guide mode cadence and announcement throttle.
     this.INTERVAL_MS    = 2000;
@@ -39,7 +34,7 @@ class GuideMode {
     if (this._active) return;
     this._active = true;
     this._scanCount = 0;
-    this._lastSpokenAt = 0;
+    this._lastMessage = null;
     console.log("[GuideSession] started");
     this._onStateChange(true);
     // First scan right away, then on interval
@@ -56,6 +51,7 @@ class GuideMode {
     this._timer = null;
     console.log("[GuideSession] stopped");
     this._silence();
+    this._lastMessage = null;
     this._onStateChange(false);
     console.log("[Guide] stopped");
   }
@@ -79,37 +75,25 @@ class GuideMode {
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
 
       const data = await res.json();
-      const now = Date.now();
-      const guidance = data.guidance || "";
-      const hasAudio = Boolean(data.audio_base64);
-      const shouldAnnounce = (now - this._lastSpokenAt) >= this._announceIntervalMs;
+      const message = data.message || null;
+      const direction = data.direction || null;
+      const isDanger = data.is_danger === true
+        || (typeof message === "string" && message.includes("Warning. You are now in the danger zone for this obstacle."));
+      const hasNewSpeech = this._handleGuideResponse(data);
 
       console.log(
         `[GuideSession] Scan #${scanId} response`,
-        {
-          isDanger: data.is_danger,
-          guidance,
-          hasAudio,
-          statusCode: res.status,
-        }
+        { message, direction, distance: data.distance, isDanger, statusCode: res.status }
       );
-      this._onGuidance(guidance, data.is_danger);
+      this._onGuidance(message || "", isDanger);
       this._onScanLog({
         id: scanId,
-        guidance,
-        isDanger: data.is_danger,
+        guidance: message || "",
+        isDanger,
         detectionCount: data.detection_count ?? null,
       });
-      if (shouldAnnounce && hasAudio) {
-        this._playBase64Audio(data.audio_base64, data.is_danger);
-        this._lastSpokenAt = now;
-      } else if (shouldAnnounce) {
-        this._speakFallback(data.guidance, data.is_danger);
-        this._lastSpokenAt = now;
-      }
-
-      if (!shouldAnnounce) {
-        console.log(`[GuideSession] Scan #${scanId} silence (throttled):`, guidance);
+      if (hasNewSpeech) {
+        console.log(`[GuideSession] Scan #${scanId} spoke message:`, message);
       }
     } catch (err) {
       const scanId = this._scanCount;
@@ -133,43 +117,27 @@ class GuideMode {
     );
   }
 
-  _playBase64Audio(b64, isDanger) {
-    // Danger: always cut current speech first
-    if (isDanger) this._silence();
-
-    try {
-      const bytes  = Uint8Array.from(atob(b64), c => c.charCodeAt(0));
-      const blob   = new Blob([bytes], { type: "audio/mpeg" });
-      const url    = URL.createObjectURL(blob);
-      const audio  = new Audio(url);
-      audio.volume = isDanger ? 1.0 : 0.9;
-      audio.play().catch(e => {
-        console.warn("[Guide] audio play blocked:", e);
-        this._speakFallback(null, isDanger);  // silent fallback — audio already spoken server-side
-      });
-      audio.onended = () => URL.revokeObjectURL(url);
-      this._curAudio = audio;
-    } catch (e) {
-      console.error("[Guide] audio decode error:", e);
-    }
+  _handleGuideResponse(data) {
+    const message = data?.message || null;
+    if (!message || message === this._lastMessage) return false;
+    this.speak(message);
+    this._lastMessage = message;
+    return true;
   }
 
-  _speakFallback(text, isDanger) {
+  speak(text) {
+    if (!text) return;
     const synth = window.speechSynthesis;
-    if (!synth || !text) return;
-    if (isDanger) synth.cancel();
+    if (!synth) return;
     const u = new SpeechSynthesisUtterance(text);
-    u.rate   = isDanger ? 1.3 : 1.05;
-    u.volume = 1.0;
+    u.rate   = 1;
+    u.pitch  = 1;
+    u.volume = 1;
+    synth.cancel();
     synth.speak(u);
   }
 
   _silence() {
-    if (this._curAudio) {
-      this._curAudio.pause();
-      this._curAudio.currentTime = 0;
-      this._curAudio = null;
-    }
     window.speechSynthesis?.cancel();
   }
 }
