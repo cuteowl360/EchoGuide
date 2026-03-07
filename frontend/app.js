@@ -450,6 +450,10 @@ function _startVoice() {
     } else if (state === "activated") {
       voicePill.className = "voice-pill activated";
       voiceLabel.textContent = "Listening…";
+      speakFallback("Yes?");
+    } else if (state === "thinking") {
+      voicePill.className = "voice-pill activated";
+      voiceLabel.textContent = "Processing\u2026";
     } else if (state === "error") {
       voicePill.className = "voice-pill error";
       voiceLabel.textContent = "Mic blocked";
@@ -457,6 +461,9 @@ function _startVoice() {
       voicePill.className = "voice-pill";
       voiceLabel.textContent = "Voice off";
     }
+  }, (transcript) => {
+    // Show every transcript briefly in the status bar so user knows mic is working
+    setStatus(`Heard: "${transcript}"`);
   });
   if (ok) _voiceStarted = true;
 }
