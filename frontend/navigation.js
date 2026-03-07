@@ -172,6 +172,19 @@ const nav = {
     return candidates;
   },
 
+  /** Format a step distance for speech (whole metres, no decimals). */
+  _fmtStepDist(m) {
+    const rounded = Math.round(m);
+    if (rounded < 10) return "a few metres";
+    return `${rounded} metres`;
+  },
+
+  /** Build a spoken instruction that includes the step distance. */
+  _stepAnnouncement(step) {
+    const dist = this._fmtStepDist(step.distance_m ?? 0);
+    return `Walk ${dist}. ${step.instruction}`;
+  },
+
   /** Step 2: user tapped a card — calculate and start route. */
   async _confirmAndRoute(dest, candidatesEl) {
     candidatesEl.querySelectorAll(".nav-candidate-card").forEach(c => {
@@ -203,17 +216,18 @@ const nav = {
     this._steps       = routeData.route.steps;
     this._currentStep = 0;
 
-    const distKm  = (routeData.route.total_distance_m / 1000).toFixed(1);
+    const totalM  = Math.round(routeData.route.total_distance_m);
     const durMin  = Math.round(routeData.route.total_duration_s / 60);
-    const firstInstr = this._steps[0]?.instruction ?? "";
+    const firstStep = this._steps[0];
+    const firstAnnouncement = firstStep ? this._stepAnnouncement(firstStep) : "";
 
     const announcement =
-      `Navigating to ${dest.name}. Address: ${dest.address}. ` +
-      `${distKm} kilometres, about ${durMin} minute${durMin !== 1 ? "s" : ""} on foot. ` +
-      firstInstr;
+      `Navigating to ${dest.name}. ` +
+      `Total distance: ${totalM} metres, about ${durMin} minute${durMin !== 1 ? "s" : ""} on foot. ` +
+      firstAnnouncement;
 
     this._speak(announcement);
-    this._onInstruction(firstInstr);
+    if (firstStep) this._onInstruction(this._stepAnnouncement(firstStep));
 
     const instrSection = document.getElementById("navInstructionSection");
     const instrDivider = document.getElementById("navInstructionDivider");
@@ -239,7 +253,7 @@ const nav = {
     const { latitude: lat, longitude: lon } = pos.coords;
 
     if (this._currentStep >= this._steps.length) {
-      this._speak("You have arrived at your destination.");
+      this._speak("You have arrived at your destination. Navigation complete. Stop here.");
       this.stop();
       return;
     }
@@ -250,16 +264,18 @@ const nav = {
     if (dist < ARRIVAL_RADIUS_M) {
       this._currentStep++;
       if (this._currentStep >= this._steps.length) {
-        this._speak("You have arrived at your destination.");
+        this._speak("You have arrived at your destination. Navigation complete. Stop here.");
         this.stop();
       } else {
         const next = this._steps[this._currentStep];
-        this._speak(next.instruction);
-        this._onInstruction(next.instruction);
+        const ann = this._stepAnnouncement(next);
+        this._speak(ann);
+        this._onInstruction(ann);
       }
-    } else if (dist < 50) {
-      // Approaching — give a heads-up
-      this._onStatus(`In ${Math.round(dist)} metres: ${step.instruction}`);
+    } else {
+      // Live countdown in the status bar
+      const rounded = Math.round(dist);
+      this._onStatus(`${rounded} metres remaining to next turn: ${step.instruction}`);
     }
   },
 
