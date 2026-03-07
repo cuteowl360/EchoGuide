@@ -199,6 +199,11 @@ class VoiceCommander {
       return { intent: "start_guide", params: {} };
     if (/\bguide\b/.test(phrase) && /\b(stop|end|off|exit)\b/.test(phrase))
       return { intent: "stop_guide", params: {} };
+    const fbTargetMatch = phrase.match(
+      /\b(?:find|locate|look for|take me to|where(?:'s| is))\b\s+(?:the\s+|a\s+)?([\w][\w\s]{0,20}?)\s*$/i
+    );
+    if (fbTargetMatch && fbTargetMatch[1])
+      return { intent: "guide_target", params: { target: fbTargetMatch[1].trim().toLowerCase() } };
     if (/\b(scan|describe|look|see|around|front|surroundings)\b/.test(phrase))
       return { intent: "scan_scene", params: {} };
     if (/\b(read|text|sign|written|label)\b/.test(phrase))
@@ -258,6 +263,13 @@ class VoiceCommander {
       return { intent: "start_guide", params: {} };
     if (/\b(stop|end|exit|deactivate|disable|turn off)\b.*\bguide\b|\bguide\b.*(off|stop|end)/.test(cmd))
       return { intent: "stop_guide", params: {} };
+
+    // Guide target — "find X", "take me to X", "guide me to X", "where is X", "look for X"
+    const targetMatch = cmd.match(
+      /\b(?:find|look for|locate|where(?:'s| is)|take me to|guide me to|lead me to|help me find|go to)\b\s+(?:the\s+|a\s+|an\s+)?([\w][\w\s]{0,30}?)\s*(?:please|now|quick(?:ly)?)?\s*$/i
+    );
+    if (targetMatch && targetMatch[1])
+      return { intent: "guide_target", params: { target: targetMatch[1].trim().toLowerCase() } };
 
     // Navigate — extract destination
     const navMatch = cmd.match(/\b(?:navigate|go|take me|directions?|how do i get)\b.*?\bto\b\s+([\w\s,]+?)(?:\s*$|\s*please)/i);

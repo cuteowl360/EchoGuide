@@ -181,6 +181,7 @@ Intents:
 - stop_camera       → user wants to turn off / close the camera
 - start_guide       → user wants to start / activate guide mode / walking assistant
 - stop_guide        → user wants to stop / exit guide mode
+- guide_target      → user wants to find a specific object while in guide mode. Extract "target" into params: {{"target": "..."}}
 - help              → user wants to know what commands are available
 - unknown           → cannot determine intent
 
@@ -207,6 +208,11 @@ Examples:
 "start guide mode" → {{"intent":"start_guide","params":{{}}}}
 "help me walk, turn on guide" → {{"intent":"start_guide","params":{{}}}}
 "stop guide mode" → {{"intent":"stop_guide","params":{{}}}}
+"find the door" → {{"intent":"guide_target","params":{{"target":"door"}}}}
+"guide me to the exit" → {{"intent":"guide_target","params":{{"target":"exit"}}}}
+"take me to the stairs" → {{"intent":"guide_target","params":{{"target":"stairs"}}}}
+"find a chair" → {{"intent":"guide_target","params":{{"target":"chair"}}}}
+"where is the bathroom" → {{"intent":"guide_target","params":{{"target":"bathroom"}}}}
 
 Return ONLY the JSON object. No explanation.
 """
@@ -258,26 +264,60 @@ async def interpret_voice(phrase: str) -> dict:
 
 # ── Guide Mode ────────────────────────────────────────────────────────────────
 
-_GUIDE_PROMPT = """You are a real-time walking assistant for a blind person outdoors.
+_GUIDE_PROMPT_BASE = """You are a real-time walking assistant for a blind person.
 
-Analyze this camera image and give ONE short navigation instruction (max 15 words).
+{target_section}
+YOLO detected objects (closest first):
+{detections_context}
+
+Analyze the camera image and give ONE short navigation instruction (max 15 words).
 
 Priority rules (apply the FIRST matching rule):
-1. Moving vehicle / car / bike heading toward person → {"guidance": "STOP — vehicle approaching", "is_danger": true}
-2. Stairs going down / ledge / drop → {"guidance": "STEP DOWN — stairs ahead", "is_danger": true}
-3. Large obstacle blocking path → {"guidance": "MOVE LEFT — obstacle" or "MOVE RIGHT — obstacle", "is_danger": true}
-4. Red traffic light / signal → {"guidance": "STOP — red light", "is_danger": true}
-5. Clear path ahead → {"guidance": "Path clear, continue forward", "is_danger": false}
-6. Crosswalk / intersection → {"guidance": "Crosswalk ahead, wait for signal", "is_danger": false}
-7. Door / entrance → {"guidance": "Door ahead on your left", "is_danger": false}
-8. Narrow passage → {"guidance": "Narrow path, slow down", "is_danger": false}
+1. Moving vehicle / car / bike heading toward person → {{"guidance": "STOP — vehicle approaching", "is_danger": true}}
+2. Stairs going down / ledge / drop → {{"guidance": "STEP DOWN — stairs ahead", "is_danger": true}}
+3. Large obstacle blocking path center → {{"guidance": "OBSTACLE — move left" or "OBSTACLE — move right", "is_danger": true}}
+4. Red traffic light / signal → {{"guidance": "STOP — red light", "is_danger": true}}
+{target_rules}
+5. Clear path ahead → {{"guidance": "Path clear, continue forward", "is_danger": false}}
+6. Crosswalk / intersection → {{"guidance": "Crosswalk ahead, wait for signal", "is_danger": false}}
+7. Narrow passage → {{"guidance": "Narrow path, slow down", "is_danger": false}}
 
 Respond ONLY with a JSON object. No markdown, no explanation."""
 
+_TARGET_SECTION_TMPL = 'USER GOAL: Guide the user to find and reach "{target}".\n'
+_TARGET_RULES_TMPL = (
+    '4b. Target "{target}" is visible in image → {{"guidance": "{{direction}}", "is_danger": false}}\n'
+    '4c. Target "{target}" is NOT visible → {{"guidance": "Cannot see {target} yet. Turn slowly.", "is_danger": false}}\n'
+)
 
-async def guide_scan_frame(frame_bgr) -> Dict[str, Any]:
+
+def _build_guide_prompt(target: str, detections_context: str) -> str:
+    if target:
+        target_section = _TARGET_SECTION_TMPL.format(target=target)
+        target_rules   = _TARGET_RULES_TMPL.format(target=target)
+    else:
+        target_section = ""
+        target_rules   = ""
+    return _GUIDE_PROMPT_BASE.format(
+        target_section=target_section,
+        target_rules=target_rules,
+        detections_context=detections_context or "No objects detected.",
+    )
+
+
+async def guide_scan_frame(
+    frame_bgr,
+    target: str = "",
+    detections_context: str = "",
+) -> Dict[str, Any]:
     """
-    Analyze a camera frame for walking hazards using Gemini Vision.
+    Analyze a camera frame for walking hazards (and optionally a target object).
+
+    Args:
+        frame_bgr:           OpenCV BGR frame
+        target:              Object user wants to find, e.g. "door" (optional)
+        detections_context:  Pre-formatted YOLO detections text (optional)
+
     Returns {"guidance": str, "is_danger": bool}.
     """
     api_key = os.getenv("GEMINI_API_KEY", "").strip()
@@ -287,6 +327,8 @@ async def guide_scan_frame(frame_bgr) -> Dict[str, Any]:
     import cv2
     _, encoded = cv2.imencode(".jpg", frame_bgr, [cv2.IMWRITE_JPEG_QUALITY, 70])
     img_b64 = base64.b64encode(encoded.tobytes()).decode("utf-8")
+
+    prompt = _build_guide_prompt(target, detections_context)
 
     # Use a fast/cheap model for the real-time loop
     model_name = os.getenv("GEMINI_GUIDE_MODEL", os.getenv("GEMINI_MODEL", "gemini-2.0-flash-lite"))
@@ -298,7 +340,7 @@ async def guide_scan_frame(frame_bgr) -> Dict[str, Any]:
                 model=model_name,
                 contents=[{
                     "parts": [
-                        {"text": _GUIDE_PROMPT},
+                        {"text": prompt},
                         {"inline_data": {"mime_type": "image/jpeg", "data": img_b64}},
                     ]
                 }],
@@ -310,7 +352,7 @@ async def guide_scan_frame(frame_bgr) -> Dict[str, Any]:
             genai.configure(api_key=api_key)
             model = genai.GenerativeModel(model_name)
             response = model.generate_content(
-                [_GUIDE_PROMPT, {"mime_type": "image/jpeg", "data": img_b64}],
+                [prompt, {"mime_type": "image/jpeg", "data": img_b64}],
                 generation_config={"max_output_tokens": 80, "temperature": 0.1},
             )
             return getattr(response, "text", "").strip()
@@ -322,7 +364,7 @@ async def guide_scan_frame(frame_bgr) -> Dict[str, Any]:
         raw = raw.strip().lstrip("```json").lstrip("```").rstrip("```").strip()
         result = json.loads(raw)
         return {
-            "guidance": str(result.get("guidance", "Continue forward.")),
+            "guidance":  str(result.get("guidance", "Continue forward.")),
             "is_danger": bool(result.get("is_danger", False)),
         }
     except Exception as e:

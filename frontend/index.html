@@ -124,6 +124,12 @@
           </div>
           <p class="result-value guide-hint">Scanning every 2 seconds. Say <strong>Echo stop guide</strong> or tap the button to exit.</p>
         </div>
+        <!-- Active target badge -->
+        <div class="guide-target-row hidden" id="guideTargetRow">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="4"/><line x1="12" y1="2" x2="12" y2="4"/><line x1="12" y1="20" x2="12" y2="22"/><line x1="2" y1="12" x2="4" y2="12"/><line x1="20" y1="12" x2="22" y2="12"/></svg>
+          <span>Finding: </span><strong id="guideTargetLabel"></strong>
+          <button class="guide-target-clear" id="guideTargetClearBtn" title="Cancel target" aria-label="Cancel target">&times;</button>
+        </div>
         <div class="divider"></div>
         <div class="result-section">
           <span class="result-label">Current Guidance</span>
@@ -178,7 +184,7 @@
     <script src="/static/guide.js?v=1" defer></script>
     <script src="/static/voice.js?v=8" defer></script>
     <script src="/static/navigation.js?v=3" defer></script>
-    <script src="/static/app.js?v=12" defer></script>
+    <script src="/static/app.js?v=13" defer></script>
     <script>
       (async function () {
         try {

@@ -34,7 +34,11 @@ from .navigation import (
     geocode_place,
     filter_obstacles,
     build_obstacle_announcement,
+    build_target_guidance,
+    build_obstacle_instruction,
 )
+from .yolo_detector import detect_with_context, find_target, extract_obstacles, detections_to_prompt_lines
+from .config import OBSTACLE_LABELS
 from . import auth as _auth
 
 load_dotenv()
@@ -59,7 +63,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-from fastapi.responses import HTMLResponse, Response
+from fastapi.responses import HTMLResponse, Response, StreamingResponse
 
 # Serve static files with no-cache headers so the browser always gets fresh JS/CSS
 @app.get("/static/{file_path:path}")
@@ -584,11 +588,19 @@ async def navigate_scan_obstacles(req: NavObstacleRequest) -> Dict[str, Any]:
 # ── Guide Mode ────────────────────────────────────────────────────────────────
 
 @app.post("/guide/scan")
-async def guide_scan(image: UploadFile = File(...)) -> Dict[str, Any]:
+async def guide_scan(
+    image: UploadFile = File(...),
+    target: str = Form(""),
+) -> Dict[str, Any]:
     """
     Guide Mode real-time loop endpoint.
-    Accepts a camera frame, runs Gemini Vision hazard detection,
-    returns guidance text + ElevenLabs audio (base64 mp3).
+
+    1. Runs enriched YOLO detection for position + distance estimation.
+    2. Checks for close obstacles immediately (no API needed — fast + safe).
+    3. If a target is specified, checks if YOLO can already see it.
+    4. Falls back to Gemini Vision for nuanced scene understanding.
+    5. Returns guidance text + ElevenLabs TTS audio (base64 mp3).
+
     Called by the frontend every 2 seconds while Guide Mode is active.
     """
     if image.content_type and not image.content_type.startswith("image/"):
@@ -599,13 +611,43 @@ async def guide_scan(image: UploadFile = File(...)) -> Dict[str, Any]:
         raise HTTPException(status_code=400, detail="Empty image.")
 
     frame = _decode_frame(image_bytes)
+    target = (target or "").strip().lower()
 
-    # Gemini Vision hazard detection
-    result = await guide_scan_frame(frame)
-    guidance: str  = result["guidance"]
-    is_danger: bool = result["is_danger"]
+    # ── Step 1: enriched YOLO detections ─────────────────────────────────────
+    try:
+        detections = await asyncio.to_thread(detect_with_context, frame)
+    except Exception:
+        logger.exception("guide/scan YOLO failed")
+        detections = []
 
-    # ElevenLabs TTS
+    obstacles  = extract_obstacles(detections, OBSTACLE_LABELS, max_distance="near")
+    target_det = find_target(detections, target) if target else None
+
+    # ── Step 2: Immediate local guidance (no network call) ───────────────────
+    # Safety-first: if a danger-tier obstacle is close, warn immediately
+    DANGER_LABELS = {"car", "motorcycle", "bicycle", "bus", "truck"}
+    danger_obs = [o for o in obstacles if any(d in o.get("label","").lower() for d in DANGER_LABELS)
+                  and o.get("distance") == "close"]
+    if danger_obs:
+        top  = danger_obs[0]
+        guidance   = f"STOP. {top['label'].capitalize()} very close."
+        is_danger  = True
+    elif target and target_det and target_det.get("distance") != "far":
+        # YOLO found the target at a useful distance — no Gemini call needed
+        guidance  = build_target_guidance(target, target_det, obstacles)
+        is_danger = bool(obstacles)
+    elif target and not target_det and not obstacles:
+        # Target not found, area clear — skip Gemini
+        guidance  = f"Cannot see {target} yet. Turn slowly to scan."
+        is_danger = False
+    else:
+        # ── Step 3: Gemini Vision (richer scene understanding) ───────────────
+        det_context = detections_to_prompt_lines(detections)
+        result      = await guide_scan_frame(frame, target=target, detections_context=det_context)
+        guidance    = result["guidance"]
+        is_danger   = result["is_danger"]
+
+    # ── Step 4: ElevenLabs TTS ────────────────────────────────────────────────
     audio_b64: Optional[str] = None
     if tts_is_available():
         audio_bytes = await asyncio.to_thread(synthesize_speech, guidance)
@@ -615,5 +657,7 @@ async def guide_scan(image: UploadFile = File(...)) -> Dict[str, Any]:
     return {
         "guidance":    guidance,
         "is_danger":   is_danger,
+        "target":      target or None,
+        "target_found": target_det is not None,
         "audio_base64": audio_b64,
     }

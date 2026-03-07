@@ -475,10 +475,13 @@ const guidePanel        = document.getElementById("guidePanel");
 const guideGuidanceEl   = document.getElementById("guideGuidance");
 const guideDangerBanner = document.getElementById("guideDangerBanner");
 const guideDangerText   = document.getElementById("guideDangerText");
+const guideTargetRow    = document.getElementById("guideTargetRow");
+const guideTargetLabel  = document.getElementById("guideTargetLabel");
+const guideTargetClearBtn = document.getElementById("guideTargetClearBtn");
 
 const guideMode = new GuideMode(video, canvas, {
   intervalMs: 2000,
-  onGuidance: (text, isDanger) => {
+  onGuidance: (text, isDanger, targetFound) => {
     guideGuidanceEl.textContent = text;
     if (isDanger) {
       guidePanel.classList.add("danger");
@@ -495,6 +498,11 @@ const guideMode = new GuideMode(video, canvas, {
       guideDangerBanner.classList.add("hidden");
       setStatus(`Guide: ${text}`);
     }
+    // Flash target row green when the target is found
+    if (targetFound && guideTargetRow && !guideTargetRow.classList.contains("hidden")) {
+      guideTargetRow.style.background = "rgba(34,197,94,0.18)";
+      setTimeout(() => { guideTargetRow.style.background = ""; }, 1500);
+    }
   },
   onStateChange: (active) => {
     if (active) {
@@ -506,10 +514,27 @@ const guideMode = new GuideMode(video, canvas, {
       guideModeBtn.classList.remove("active");
       guideModeBtn.querySelector(".btn-label").textContent = "Guide Mode";
       guidePanel.classList.add("hidden");
+      if (guideTargetRow) guideTargetRow.classList.add("hidden");
       setStatus("Guide Mode stopped.");
     }
   },
+  onTargetChange: (target) => {
+    if (!guideTargetRow || !guideTargetLabel) return;
+    if (target) {
+      guideTargetLabel.textContent = target;
+      guideTargetRow.classList.remove("hidden");
+    } else {
+      guideTargetRow.classList.add("hidden");
+    }
+  },
 });
+
+if (guideTargetClearBtn) {
+  guideTargetClearBtn.addEventListener("click", () => {
+    guideMode.setTarget("");
+    speakFallback("Target cleared. Scanning for hazards.");
+  });
+}
 
 guideModeBtn.addEventListener("click", async () => {
   if (guideMode.active) {
@@ -628,7 +653,7 @@ function handleVoiceCommand(type, params) {
     case "start_guide":
       setStatus("Echo: starting Guide Mode…");
       speakFallback("Guide Mode activated.");
-      guideModeBtn.click();
+      if (!guideMode.active) guideModeBtn.click();
       break;
 
     case "stop_guide":
@@ -636,6 +661,24 @@ function handleVoiceCommand(type, params) {
       speakFallback("Guide Mode stopped.");
       if (guideMode.active) guideMode.stop();
       break;
+
+    case "guide_target": {
+      const target = (params.target || "").trim();
+      if (!target) break;
+      setStatus(`Echo: finding ${target}…`);
+      speakFallback(`Looking for ${target}.`);
+      // Auto-start guide mode if not already active
+      if (!guideMode.active) {
+        _withCamera(async () => {
+          await new Promise(r => setTimeout(r, 400));
+          guideMode.start();
+          guideMode.setTarget(target);
+        });
+      } else {
+        guideMode.setTarget(target);
+      }
+      break;
+    }
 
     case "repeat_name":
       setStatus("Echo: repeating last identified person…");
@@ -661,8 +704,9 @@ function handleVoiceCommand(type, params) {
         "Say Echo identify to identify a person. " +
         "Say Echo remember, then a name, to save a face. " +
         "Say Echo navigate to a place name to get directions. " +
-        "Say Echo stop to end navigation. " +
-        "Say Echo start camera or stop camera."
+        "Say Echo start guide to activate Guide Mode. " +
+        "Say Echo find door — or any object — while in Guide Mode to locate it. " +
+        "Say Echo stop to end navigation or guide mode."
       );
       break;
 

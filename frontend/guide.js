@@ -18,33 +18,48 @@ class GuideMode {
     this._active   = false;
     this._busy     = false;          // prevent overlapping requests
     this._curAudio = null;           // currently playing Audio element
+    this._target   = "";             // object user is trying to find
 
     this.INTERVAL_MS    = options.intervalMs    || 2000;
-    this._onGuidance    = options.onGuidance    || (() => {});  // (text, isDanger)
+    this._onGuidance    = options.onGuidance    || (() => {});  // (text, isDanger, targetFound)
     this._onStateChange = options.onStateChange || (() => {});  // (active)
+    this._onTargetChange = options.onTargetChange || (() => {}); // (target)
   }
 
   get active() { return this._active; }
+  get target() { return this._target; }
+
+  /** Set or clear the target the user is trying to find. */
+  setTarget(target) {
+    this._target = (target || "").trim().toLowerCase();
+    this._onTargetChange(this._target);
+    console.log("[Guide] target set to:", this._target || "(none)");
+    // Trigger an immediate scan so the user gets instant feedback
+    if (this._active) this._scan();
+  }
 
   /** Start the real-time scanning loop. */
-  start() {
+  start(target) {
     if (this._active) return;
+    if (target !== undefined) this._target = (target || "").trim().toLowerCase();
     this._active = true;
     this._onStateChange(true);
     // First scan right away, then on interval
     this._scan();
     this._timer = setInterval(() => this._scan(), this.INTERVAL_MS);
-    console.log("[Guide] started — interval", this.INTERVAL_MS, "ms");
+    console.log("[Guide] started — interval", this.INTERVAL_MS, "ms, target:", this._target || "(none)");
   }
 
   /** Stop the loop and silence any playing audio. */
   stop() {
     if (!this._active) return;
     this._active = false;
+    this._target = "";
     clearInterval(this._timer);
     this._timer = null;
     this._silence();
     this._onStateChange(false);
+    this._onTargetChange("");
     console.log("[Guide] stopped");
   }
 
@@ -59,13 +74,15 @@ class GuideMode {
       const blob = await this._captureBlob();
       const form = new FormData();
       form.append("image", blob, "guide.jpg");
+      if (this._target) form.append("target", this._target);
 
       const res = await fetch("/guide/scan", { method: "POST", body: form });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
 
       const data = await res.json();
-      console.log("[Guide]", data.is_danger ? "⚠ DANGER" : "✓", data.guidance);
-      this._onGuidance(data.guidance, data.is_danger);
+      console.log("[Guide]", data.is_danger ? "⚠ DANGER" : "✓", data.guidance,
+                  data.target ? `| target "${data.target}" ${data.target_found ? "FOUND" : "not found"}` : "");
+      this._onGuidance(data.guidance, data.is_danger, data.target_found);
 
       if (data.audio_base64) {
         this._playBase64Audio(data.audio_base64, data.is_danger);

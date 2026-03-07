@@ -915,3 +915,30 @@ audio.hidden { display: none; }
 }
 .guide-danger-banner.hidden { display: none; }
 
+/* Active target row */
+.guide-target-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  background: rgba(99, 102, 241, 0.15);
+  border: 1px solid rgba(129,140,248,0.35);
+  border-radius: var(--r-sm);
+  padding: 6px 12px;
+  font-size: 0.88rem;
+  color: #a5b4fc;
+  margin-top: 6px;
+}
+.guide-target-row strong { color: #e0e7ff; }
+.guide-target-row.hidden { display: none; }
+.guide-target-clear {
+  margin-left: auto;
+  background: none;
+  border: none;
+  cursor: pointer;
+  color: #94a3b8;
+  font-size: 1.1rem;
+  line-height: 1;
+  padding: 0 2px;
+}
+.guide-target-clear:hover { color: #f87171; }
+

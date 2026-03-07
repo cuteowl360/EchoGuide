@@ -1,4 +1,4 @@
-"""Navigation helpers — OpenRouteService Directions + Geocoding."""
+"""Navigation helpers — Guide Mode local navigation + ORS Directions + Geocoding."""
 
 from __future__ import annotations
 
@@ -9,19 +9,124 @@ from typing import Any, Dict, List, Optional, Tuple
 
 import requests
 
+from .config import OBSTACLE_LABELS
+
 logger = logging.getLogger(__name__)
 
 ORS_DIRECTIONS_URL  = "https://api.openrouteservice.org/v2/directions/foot-walking/geojson"
 ORS_GEOCODE_URL     = "https://api.openrouteservice.org/geocode/search"
 ORS_AUTOCOMPLETE_URL = "https://api.openrouteservice.org/geocode/autocomplete"
 
-# Obstacles that are worth announcing while the user is walking
-OBSTACLE_LABELS = {
-    "person", "bicycle", "car", "motorcycle", "bus", "truck",
-    "traffic light", "stop sign", "bench", "chair", "potted plant",
-    "fire hydrant", "parking meter", "dog", "cat", "suitcase",
-    "backpack", "umbrella", "cone", "barrier",
-}
+
+# ══════════════════════════════════════════════════════════════════════════════
+# LOCAL GUIDE MODE NAVIGATION (no external API — pure YOLO + logic)
+# ══════════════════════════════════════════════════════════════════════════════
+
+def build_target_guidance(
+    target: str,
+    target_det: Optional[Dict[str, Any]],
+    obstacles: List[Dict[str, Any]],
+) -> str:
+    """
+    Build a short spoken navigation instruction (<= 15 words) from structured
+    YOLO data, without calling Gemini (used as fast fallback or supplement).
+
+    Args:
+        target:      the object the user is trying to reach, e.g. "door"
+        target_det:  enriched detection dict for the target (may be None)
+        obstacles:   list of enriched detections that are close hazards
+    """
+    # ── Obstacle warnings always come first ───────────────────────────────────
+    if obstacles:
+        top = obstacles[0]
+        label    = top.get("label", "obstacle")
+        position = top.get("position", "center")
+        metres   = top.get("metres", "")
+        dist_str = f" {metres} metres" if metres else ""
+
+        if position == "center":
+            avoid_dir = "left"
+        elif position == "left":
+            avoid_dir = "right"
+        else:
+            avoid_dir = "left"
+
+        return f"{label.capitalize()} ahead{dist_str}. Move {avoid_dir}."
+
+    # ── Target found ──────────────────────────────────────────────────────────
+    if target_det:
+        pos    = target_det.get("position", "center")
+        dist   = target_det.get("distance", "near")
+        metres = target_det.get("metres", "")
+
+        dist_str = f" {metres} metres" if metres else ""
+        if dist == "close":
+            return f"{target.capitalize()} right here.{dist_str} Reach forward."
+        if pos == "center":
+            return f"{target.capitalize()} ahead.{dist_str} Walk forward."
+        if pos == "left":
+            return f"{target.capitalize()} on your left.{dist_str} Turn left."
+        return f"{target.capitalize()} on your right.{dist_str} Turn right."
+
+    # ── Target not visible ────────────────────────────────────────────────────
+    return f"Cannot see {target} yet. Turn slowly to scan."
+
+
+def build_obstacle_instruction(
+    obstacles: List[Dict[str, Any]],
+) -> Tuple[str, bool]:
+    """
+    Build a spoken warning from close obstacles.
+
+    Returns (instruction_text, is_danger).
+    is_danger=True means the user should STOP immediately.
+    """
+    if not obstacles:
+        return "Path clear, continue forward.", False
+
+    # Danger objects that demand an immediate stop
+    DANGER_LABELS = {"car", "motorcycle", "bicycle", "bus", "truck", "stairs"}
+
+    for obs in obstacles:
+        label = obs.get("label", "").lower()
+        pos   = obs.get("position", "center")
+        dist  = obs.get("distance", "near")
+
+        # Check for immediate danger
+        if dist == "close" and any(d in label for d in DANGER_LABELS):
+            return f"STOP. {label.capitalize()} {'ahead' if pos == 'center' else pos}.", True
+
+    # Non-critical obstacles
+    top = obstacles[0]
+    label    = top.get("label", "obstacle")
+    position = top.get("position", "center")
+    avoid    = "left" if position != "left" else "right"
+    metres   = top.get("metres", "")
+    dist_str = f" {metres} metres" if metres else ""
+
+    return f"{label.capitalize()}{dist_str} {'ahead' if position == 'center' else position}. Move {avoid}.", False
+
+
+def build_scene_summary(detections: List[Dict[str, Any]], max_items: int = 5) -> str:
+    """Return a brief spoken summary of the nearest detected objects."""
+    if not detections:
+        return "Nothing detected around you."
+    parts = []
+    seen: set = set()
+    for det in detections[:max_items]:
+        label = det.get("label", "object")
+        if label in seen:
+            continue
+        seen.add(label)
+        pos    = det.get("position", "")
+        metres = det.get("metres", "")
+        part   = label
+        if pos and pos != "center":
+            part += f" on your {pos}"
+        if metres:
+            part += f", {metres} metres"
+        parts.append(part)
+    return "; ".join(parts) + "."
 
 
 # ── Geocoding ─────────────────────────────────────────────────────────────────
