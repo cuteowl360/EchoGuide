@@ -84,13 +84,25 @@ def _easyocr_result_to_blocks(results: List[Any]) -> Tuple[str, List[Dict[str, A
     return "\n".join(lines), blocks
 
 
+def _preprocess_for_tesseract(image_bgr: np.ndarray) -> np.ndarray:
+    """Apply basic preprocessing to improve Tesseract OCR accuracy."""
+    gray = cv2.cvtColor(image_bgr, cv2.COLOR_BGR2GRAY)
+    # Upscale a bit to help OCR read small text
+    gray = cv2.resize(gray, None, fx=1.5, fy=1.5, interpolation=cv2.INTER_CUBIC)
+    # Reduce noise while keeping edges sharp
+    gray = cv2.bilateralFilter(gray, 11, 17, 17)
+    _, thresh = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+    return thresh
+
+
 def _tesseract_result(image_bgr: np.ndarray) -> Tuple[str, List[Dict[str, Any]]]:
     """Fallback OCR using pytesseract when EasyOCR is unavailable."""
     if pytesseract is None:
         return "", []
 
     try:
-        text = pytesseract.image_to_string(image_bgr, config="--psm 6")
+        processed = _preprocess_for_tesseract(image_bgr)
+        text = pytesseract.image_to_string(processed, config="--oem 3 --psm 6")
         normalized = text.strip()
         return normalized, [{"text": normalized, "confidence": 1.0, "bbox": {}}] if normalized else []
     except Exception:
