@@ -113,6 +113,20 @@ class VoiceCommander {
   }
 
   _process(transcript) {
+    // ── Emergency stop — highest priority, no wake-word or activation needed ─
+    // Triggers on: "Echo stop", "Stop Echo", "Silence Echo", "Echo shut down",
+    //              "Shut down Echo", just "stop" when already activated.
+    const containsEcho = /\b(echo|eco|ecco)\b/.test(transcript);
+    const isStopPhrase = /\b(stop|shut\s*down|silence|quiet)\b/.test(transcript);
+    const isJustStop   = /^\s*stop\s*$/.test(transcript) && this._activated;
+    if ((containsEcho && isStopPhrase) || isJustStop) {
+      this._deactivate();
+      this._onChange?.("listening");
+      console.log("[Voice] EMERGENCY STOP:", transcript);
+      this._onCommand("emergency_stop", {});
+      return true;
+    }
+
     // If waiting for a name, next phrase IS the name
     if (this._awaitingName) {
       this._awaitingName = false;
@@ -121,7 +135,7 @@ class VoiceCommander {
       return true;
     }
 
-    // Already activated � any phrase is the command
+    // Already activated — any phrase is the command
     if (this._activated) {
       this._deactivate();
       this._onChange?.("listening");

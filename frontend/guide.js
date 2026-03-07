@@ -4,11 +4,17 @@
  * Captures a camera frame every 2 seconds, sends to /guide/scan,
  * and speaks back navigation guidance via ElevenLabs TTS.
  *
- * DANGER responses ("STOP", "STEP DOWN", "MOVE LEFT/RIGHT") immediately
- * interrupt any current audio for maximum safety.
+ * Safety guarantees:
+ *   • DANGER messages always interrupt any playing audio immediately.
+ *   • Speech deduplication: identical non-danger messages within 5 s are silently skipped.
+ *   • Cooldown: non-danger speech fires at most once every 2 s.
+ *   • emergencyStop(): silences everything and halts the loop.
  */
 
 "use strict";
+
+const SPEECH_COOLDOWN_MS  = 2000;   // min gap between non-danger utterances
+const SPEECH_DEDUP_MS     = 5000;   // suppress identical message within this window
 
 class GuideMode {
   constructor(videoEl, canvasEl, options = {}) {
@@ -16,14 +22,18 @@ class GuideMode {
     this._canvas   = canvasEl;
     this._timer    = null;
     this._active   = false;
-    this._busy     = false;          // prevent overlapping requests
-    this._curAudio = null;           // currently playing Audio element
-    this._target   = "";             // object user is trying to find
+    this._busy     = false;
+    this._curAudio = null;
+    this._target   = "";
 
-    this.INTERVAL_MS    = options.intervalMs    || 2000;
-    this._onGuidance    = options.onGuidance    || (() => {});  // (text, isDanger, targetFound)
-    this._onStateChange = options.onStateChange || (() => {});  // (active)
-    this._onTargetChange = options.onTargetChange || (() => {}); // (target)
+    // Speech dedup / cooldown state
+    this._lastSpokenText  = "";
+    this._lastSpokenTime  = 0;       // Date.now() of last speech output
+
+    this.INTERVAL_MS     = options.intervalMs    || 2000;
+    this._onGuidance     = options.onGuidance    || (() => {});
+    this._onStateChange  = options.onStateChange || (() => {});
+    this._onTargetChange = options.onTargetChange || (() => {});
   }
 
   get active() { return this._active; }
@@ -33,8 +43,6 @@ class GuideMode {
   setTarget(target) {
     this._target = (target || "").trim().toLowerCase();
     this._onTargetChange(this._target);
-    console.log("[Guide] target set to:", this._target || "(none)");
-    // Trigger an immediate scan so the user gets instant feedback
     if (this._active) this._scan();
   }
 
@@ -44,7 +52,6 @@ class GuideMode {
     if (target !== undefined) this._target = (target || "").trim().toLowerCase();
     this._active = true;
     this._onStateChange(true);
-    // First scan right away, then on interval
     this._scan();
     this._timer = setInterval(() => this._scan(), this.INTERVAL_MS);
     console.log("[Guide] started — interval", this.INTERVAL_MS, "ms, target:", this._target || "(none)");
@@ -55,6 +62,7 @@ class GuideMode {
     if (!this._active) return;
     this._active = false;
     this._target = "";
+    this._lastSpokenText = "";
     clearInterval(this._timer);
     this._timer = null;
     this._silence();
@@ -63,11 +71,21 @@ class GuideMode {
     console.log("[Guide] stopped");
   }
 
+  /**
+   * Emergency stop — immediately silences all audio, halts guide loop.
+   * Called by voice command "Echo stop", "Stop Echo", etc.
+   */
+  emergencyStop() {
+    this._silence();
+    if (this._active) this.stop();
+    console.log("[Guide] EMERGENCY STOP");
+  }
+
   // ── private ──────────────────────────────────────────────────────────────
 
   async _scan() {
     if (this._busy || !this._active) return;
-    if (!this._video.videoWidth)     return;  // camera frame not ready yet
+    if (!this._video.videoWidth)     return;
 
     this._busy = true;
     try {
@@ -80,20 +98,45 @@ class GuideMode {
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
 
       const data = await res.json();
-      console.log("[Guide]", data.is_danger ? "⚠ DANGER" : "✓", data.guidance,
-                  data.target ? `| target "${data.target}" ${data.target_found ? "FOUND" : "not found"}` : "");
-      this._onGuidance(data.guidance, data.is_danger, data.target_found);
+      const { guidance, is_danger, target_found, approaching } = data;
+      console.log("[Guide]", is_danger ? "⚠ DANGER" : "✓", guidance,
+        approaching?.length ? `| approaching: ${approaching.join(", ")}` : "");
 
-      if (data.audio_base64) {
-        this._playBase64Audio(data.audio_base64, data.is_danger);
+      this._onGuidance(guidance, is_danger, target_found);
+
+      // ── Speech deduplication + cooldown ──────────────────────────────────
+      const shouldSpeak = this._shouldSpeak(guidance, is_danger);
+      if (!shouldSpeak) {
+        console.log("[Guide] speech suppressed (dedup/cooldown):", guidance.slice(0, 40));
       } else {
-        this._speakFallback(data.guidance, data.is_danger);
+        this._lastSpokenText = guidance;
+        this._lastSpokenTime = Date.now();
+        if (data.audio_base64) {
+          this._playBase64Audio(data.audio_base64, is_danger);
+        } else {
+          this._speakFallback(guidance, is_danger);
+        }
       }
     } catch (err) {
       console.error("[Guide] scan error:", err);
     } finally {
       this._busy = false;
     }
+  }
+
+  /**
+   * Returns true only when the message should actually be spoken.
+   * DANGER messages always pass. Non-danger messages are filtered by:
+   *   1. cooldown — max one utterance per SPEECH_COOLDOWN_MS
+   *   2. dedup    — identical text within SPEECH_DEDUP_MS is skipped
+   */
+  _shouldSpeak(text, isDanger) {
+    if (isDanger) return true;   // safety warnings always get through
+    const now  = Date.now();
+    const gap  = now - this._lastSpokenTime;
+    if (gap < SPEECH_COOLDOWN_MS) return false;
+    if (text === this._lastSpokenText && gap < SPEECH_DEDUP_MS) return false;
+    return true;
   }
 
   _captureBlob() {
@@ -111,9 +154,7 @@ class GuideMode {
   }
 
   _playBase64Audio(b64, isDanger) {
-    // Danger: always cut current speech first
     if (isDanger) this._silence();
-
     try {
       const bytes  = Uint8Array.from(atob(b64), c => c.charCodeAt(0));
       const blob   = new Blob([bytes], { type: "audio/mpeg" });
@@ -122,7 +163,7 @@ class GuideMode {
       audio.volume = isDanger ? 1.0 : 0.9;
       audio.play().catch(e => {
         console.warn("[Guide] audio play blocked:", e);
-        this._speakFallback(null, isDanger);  // silent fallback — audio already spoken server-side
+        this._speakFallback(null, isDanger);
       });
       audio.onended = () => URL.revokeObjectURL(url);
       this._curAudio = audio;
@@ -135,9 +176,9 @@ class GuideMode {
     const synth = window.speechSynthesis;
     if (!synth || !text) return;
     if (isDanger) synth.cancel();
-    const u = new SpeechSynthesisUtterance(text);
-    u.rate   = isDanger ? 1.3 : 1.05;
-    u.volume = 1.0;
+    const u   = new SpeechSynthesisUtterance(text);
+    u.rate    = isDanger ? 1.3 : 1.05;
+    u.volume  = 1.0;
     synth.speak(u);
   }
 

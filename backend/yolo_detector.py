@@ -143,6 +143,67 @@ def extract_obstacles(
     return obstacles
 
 
+# ── Cross-frame approach detection ──────────────────────────────────────────
+
+def detect_approach(
+    current: List[Dict[str, Any]],
+    previous: List[Dict[str, Any]],
+    growth_threshold: float = 0.20,   # 20% bbox area growth = approaching
+    center_margin: float = 0.25,       # objects within 25% of centre count as "ahead"
+) -> List[Dict[str, Any]]:
+    """
+    Compare current detections against the previous frame.
+    Returns objects that are GROWING (user walking toward them), enriched with:
+      - approaching    : True
+      - growth_ratio   : float  (fractional size increase, e.g. 0.35 = 35%)
+
+    Only centre-ish objects (position == 'center') are flagged — side objects
+    the user is not heading toward are ignored.
+    """
+    # Build label → max bbox area map for previous frame
+    prev_areas: Dict[str, float] = {}
+    for det in previous:
+        label = det.get("label", "")
+        box   = det.get("bbox", {})
+        area  = float(
+            max(0, box.get("x2", 0) - box.get("x1", 0)) *
+            max(0, box.get("y2", 0) - box.get("y1", 0))
+        )
+        if area > prev_areas.get(label, 0.0):
+            prev_areas[label] = area
+
+    approaching: List[Dict[str, Any]] = []
+    for det in current:
+        label    = det.get("label", "")
+        position = det.get("position", "")
+
+        # Only track objects that are roughly ahead of the user
+        if position != "center":
+            continue
+
+        if label not in prev_areas:
+            continue
+
+        box       = det.get("bbox", {})
+        curr_area = float(
+            max(0, box.get("x2", 0) - box.get("x1", 0)) *
+            max(0, box.get("y2", 0) - box.get("y1", 0))
+        )
+        prev_area = prev_areas[label]
+        if prev_area > 0 and curr_area > 0:
+            growth = (curr_area - prev_area) / prev_area
+            if growth >= growth_threshold:
+                approaching.append({
+                    **det,
+                    "approaching": True,
+                    "growth_ratio": round(growth, 2),
+                })
+
+    # Sort by closest first
+    approaching.sort(key=lambda d: d.get("metres", 99))
+    return approaching
+
+
 # ── Compact text summary for Gemini prompt ────────────────────────────────────
 
 def detections_to_prompt_lines(detections: List[Dict[str, Any]], max_items: int = 10) -> str:

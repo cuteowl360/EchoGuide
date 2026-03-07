@@ -37,8 +37,37 @@ from .navigation import (
     build_target_guidance,
     build_obstacle_instruction,
 )
-from .yolo_detector import detect_with_context, find_target, extract_obstacles, detections_to_prompt_lines
+import time
+from .yolo_detector import detect_with_context, find_target, extract_obstacles, detections_to_prompt_lines, detect_approach
+from .navigation import build_approach_message
 from .config import OBSTACLE_LABELS
+
+# ── Server-side Guide Mode state (single-user / single-process) ─────────────────
+# Stored between requests so we can compare consecutive frames.
+_guide_state: Dict[str, Any] = {
+    "prev_detections": [],      # enriched detections from the last /guide/scan call
+    "last_guidance":   "",      # last spoken guidance text
+    "last_guidance_ts": 0.0,    # time.monotonic() of last /guide/scan response
+}
+
+# Phrases we NEVER want to say – replace with specific YOLO-derived info instead.
+_GENERIC_PHRASES = (
+    "approach with caution",
+    "caution ahead",
+    "continue with caution",
+    "proceed with caution",
+    "be careful",
+    "watch your step",
+    "obstacle ahead",           # too vague – we always know what the obstacle is
+)
+
+
+def _is_generic(text: str) -> bool:
+    """Return True when the guidance text is an unhelpful generic phrase."""
+    t = text.lower()
+    return any(p in t for p in _GENERIC_PHRASES)
+
+
 from . import auth as _auth
 
 load_dotenv()
@@ -595,22 +624,23 @@ async def guide_scan(
     """
     Guide Mode real-time loop endpoint.
 
-    1. Runs enriched YOLO detection for position + distance estimation.
-    2. Checks for close obstacles immediately (no API needed — fast + safe).
-    3. If a target is specified, checks if YOLO can already see it.
-    4. Falls back to Gemini Vision for nuanced scene understanding.
-    5. Returns guidance text + ElevenLabs TTS audio (base64 mp3).
+    Priority order (first matching rule wins):
+      a. Immediate-danger vehicle/staircase close by      → STOP warning
+      b. Object actively approaching (bbox growing)        → specific named warning
+      c. Target found at useful distance                   → directional target guidance
+      d. Static obstacle near centre                       → named obstacle warning
+      e. Target not found, area clear                      → scanning instruction
+      f. Gemini Vision fallback (post-processed)           → strips generic phrases
 
     Called by the frontend every 2 seconds while Guide Mode is active.
     """
     if image.content_type and not image.content_type.startswith("image/"):
         raise HTTPException(status_code=400, detail="Image file required.")
-
     image_bytes = await image.read()
     if not image_bytes:
         raise HTTPException(status_code=400, detail="Empty image.")
 
-    frame = _decode_frame(image_bytes)
+    frame  = _decode_frame(image_bytes)
     target = (target or "").strip().lower()
 
     # ── Step 1: enriched YOLO detections ─────────────────────────────────────
@@ -620,44 +650,83 @@ async def guide_scan(
         logger.exception("guide/scan YOLO failed")
         detections = []
 
+    # ── Step 2: cross-frame approach detection ────────────────────────────────
+    prev_dets   = _guide_state["prev_detections"]
+    approaching = detect_approach(detections, prev_dets)
+    _guide_state["prev_detections"] = detections   # update for next frame
+
     obstacles  = extract_obstacles(detections, OBSTACLE_LABELS, max_distance="near")
     target_det = find_target(detections, target) if target else None
 
-    # ── Step 2: Immediate local guidance (no network call) ───────────────────
-    # Safety-first: if a danger-tier obstacle is close, warn immediately
-    DANGER_LABELS = {"car", "motorcycle", "bicycle", "bus", "truck"}
-    danger_obs = [o for o in obstacles if any(d in o.get("label","").lower() for d in DANGER_LABELS)
-                  and o.get("distance") == "close"]
+    # ── Step 3: build guidance (priority chain) ───────────────────────────────
+    is_danger = False
+    guidance  = ""
+
+    DANGER_LABELS = {"car", "motorcycle", "bicycle", "bus", "truck", "stairs"}
+
+    # a) Immediate danger (close vehicle / stairs)
+    danger_obs = [
+        o for o in obstacles
+        if any(d in o.get("label", "").lower() for d in DANGER_LABELS)
+        and o.get("distance") == "close"
+    ]
     if danger_obs:
-        top  = danger_obs[0]
-        guidance   = f"STOP. {top['label'].capitalize()} very close."
-        is_danger  = True
+        top      = danger_obs[0]
+        guidance = f"STOP. {top['label'].capitalize()} directly ahead."
+        is_danger = True
+
+    # b) Object actively approaching the user — always name it specifically
+    elif approaching:
+        guidance  = build_approach_message(approaching[0])
+        is_danger = approaching[0].get("distance") == "close"
+
+    # c) Target found at a useful distance — no Gemini needed
     elif target and target_det and target_det.get("distance") != "far":
-        # YOLO found the target at a useful distance — no Gemini call needed
         guidance  = build_target_guidance(target, target_det, obstacles)
-        is_danger = bool(obstacles)
-    elif target and not target_det and not obstacles:
-        # Target not found, area clear — skip Gemini
-        guidance  = f"Cannot see {target} yet. Turn slowly to scan."
-        is_danger = False
+        is_danger = any(o.get("distance") == "close" for o in obstacles)
+
+    # d) Static obstacle in path — name it specifically
+    elif obstacles:
+        top      = obstacles[0]
+        name     = top.get("label", "obstacle")
+        pos      = top.get("position", "center")
+        metres   = top.get("metres", "")
+        dist_str = f" {metres} metres" if metres else ""
+        avoid    = "right" if pos == "left" else ("left" if pos == "right" else "left")
+        guidance  = f"{name.capitalize()} ahead.{dist_str} Move {avoid}."
+        is_danger = top.get("distance") == "close"
+
+    # e) Target requested but not found, path looks clear
+    elif target and not target_det:
+        guidance = f"Cannot see {target} yet. Turn slowly to scan."
+
+    # f) Gemini Vision fallback (richer scene understanding)
     else:
-        # ── Step 3: Gemini Vision (richer scene understanding) ───────────────
-        det_context = detections_to_prompt_lines(detections)
-        result      = await guide_scan_frame(frame, target=target, detections_context=det_context)
-        guidance    = result["guidance"]
-        is_danger   = result["is_danger"]
+        det_context  = detections_to_prompt_lines(detections)
+        result       = await guide_scan_frame(frame, target=target, detections_context=det_context)
+        raw_guidance = result["guidance"]
+        is_danger    = result["is_danger"]
+        # Replace generic Gemini phrases with specific YOLO-derived text
+        if _is_generic(raw_guidance) and detections:
+            guidance = build_approach_message(detections[0])
+        else:
+            guidance = raw_guidance
 
     # ── Step 4: ElevenLabs TTS ────────────────────────────────────────────────
     audio_b64: Optional[str] = None
-    if tts_is_available():
+    if tts_is_available() and guidance:
         audio_bytes = await asyncio.to_thread(synthesize_speech, guidance)
         if audio_bytes:
             audio_b64 = base64.b64encode(audio_bytes).decode("utf-8")
 
+    _guide_state["last_guidance"]    = guidance
+    _guide_state["last_guidance_ts"] = time.monotonic()
+
     return {
-        "guidance":    guidance,
-        "is_danger":   is_danger,
-        "target":      target or None,
+        "guidance":     guidance,
+        "is_danger":    is_danger,
+        "target":       target or None,
         "target_found": target_det is not None,
+        "approaching":  [a.get("label") for a in approaching],
         "audio_base64": audio_b64,
     }

@@ -710,6 +710,16 @@ function handleVoiceCommand(type, params) {
       );
       break;
 
+    case "emergency_stop":
+      window.speechSynthesis?.cancel();
+      guideMode.emergencyStop();
+      nav.stop();
+      setStatus('Echo stopped.', '');
+      speakFallback('Guide mode stopped.');
+      voicePill.className = 'voice-pill listening';
+      voiceLabel.textContent = 'Say "Echo"';
+      break;
+
     case "unknown":
       setStatus(`Echo heard you but didn't understand. Try: "Echo scan", "Echo read", "Echo help".`);
       speakFallback(`Sorry, I didn't understand. Say Echo help to hear available commands.`);

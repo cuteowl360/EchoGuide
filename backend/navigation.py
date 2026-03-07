@@ -22,6 +22,36 @@ ORS_AUTOCOMPLETE_URL = "https://api.openrouteservice.org/geocode/autocomplete"
 # LOCAL GUIDE MODE NAVIGATION (no external API — pure YOLO + logic)
 # ══════════════════════════════════════════════════════════════════════════════
 
+def build_approach_message(det: Dict[str, Any]) -> str:
+    """
+    Generate a specific spoken warning for an object the user is walking toward.
+    Never uses generic phrases like 'approach with caution'.
+    Always names the object + direction + estimated distance.
+    """
+    label    = det.get("label", "object")
+    position = det.get("position", "center")
+    metres   = det.get("metres", "")
+    distance = det.get("distance", "near")
+
+    dist_str = f" {metres} metres" if metres else ""
+
+    # Determine avoidance direction
+    if distance == "close":
+        if position == "center":
+            return f"Stop. {label.capitalize()} directly ahead.{dist_str}"
+        avoid = "right" if position == "left" else "left"
+        return f"Stop. {label.capitalize()} {position}.{dist_str} Move {avoid}."
+
+    if position == "left":
+        direction_hint = " Move slightly right."
+    elif position == "right":
+        direction_hint = " Move slightly left."
+    else:
+        direction_hint = " Walk forward." if distance == "far" else " Slow down."
+
+    return f"{label.capitalize()} ahead.{dist_str}{direction_hint}"
+
+
 def build_target_guidance(
     target: str,
     target_det: Optional[Dict[str, Any]],
