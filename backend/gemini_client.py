@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import json
 import os
 from typing import Any, Dict, List, Sequence
 
@@ -148,3 +149,76 @@ async def describe_scene(
         return text or _fallback_description(detections, ocr_result)
     except Exception:
         return _fallback_description(detections, ocr_result)
+
+
+_INTENT_PROMPT = """
+You are the voice command parser for EchoGuide, an AI assistant for blind users.
+The user said the following phrase after the wake word "Echo":
+
+"{phrase}"
+
+Classify this into exactly one of these intents and return ONLY valid JSON (no markdown):
+
+{{
+  "intent": "<one of the intents below>",
+  "params": {{}}
+}}
+
+Intents:
+- scan_scene        → user wants to describe / see / scan what is in front of them
+- read_text         → user wants to read text, signs, labels, menus, or documents
+- identify_person   → user wants to know who is in front of them
+- remember_person   → user wants to save/remember a face. Extract "name" into params: {{"name": "..."}}
+- navigate          → user wants directions / to go somewhere. Extract "destination" into params: {{"destination": "..."}}
+- stop_navigation   → user wants to cancel / stop navigation
+- start_camera      → user wants to turn on / open the camera
+- stop_camera       → user wants to turn off / close the camera
+- help              → user wants to know what commands are available
+- unknown           → cannot determine intent
+
+Examples:
+"what's around me" → {{"intent":"scan_scene","params":{{}}}}
+"can you look in front of me" → {{"intent":"scan_scene","params":{{}}}}
+"read what that sign says" → {{"intent":"read_text","params":{{}}}}
+"tell me what this says" → {{"intent":"read_text","params":{{}}}}
+"who is this person" → {{"intent":"identify_person","params":{{}}}}
+"face in front of me, who is it" → {{"intent":"identify_person","params":{{}}}}
+"save this as mom" → {{"intent":"remember_person","params":{{"name":"mom"}}}}
+"learn this person, call them David" → {{"intent":"remember_person","params":{{"name":"David"}}}}
+"take me to the nearest starbucks" → {{"intent":"navigate","params":{{"destination":"starbucks"}}}}
+"how do i get to cvs pharmacy" → {{"intent":"navigate","params":{{"destination":"cvs pharmacy"}}}}
+"i need to go to the hospital" → {{"intent":"navigate","params":{{"destination":"hospital"}}}}
+"stop" → {{"intent":"stop_navigation","params":{{}}}}
+"turn on camera" → {{"intent":"start_camera","params":{{}}}}
+"activate camera" → {{"intent":"start_camera","params":{{}}}}
+
+Return ONLY the JSON object. No explanation.
+"""
+
+
+async def interpret_voice(phrase: str) -> dict:
+    """Use Gemini to classify a voice command into a structured intent dict."""
+    if genai is None or not os.getenv("GEMINI_API_KEY"):
+        return {"intent": "unknown", "params": {}}
+
+    api_key = os.getenv("GEMINI_API_KEY", "").strip()
+    prompt  = _INTENT_PROMPT.format(phrase=phrase.strip())
+    model_name = os.getenv("GEMINI_MODEL", "gemini-2.0-flash")
+
+    def _call() -> str:
+        genai.configure(api_key=api_key)
+        model = genai.GenerativeModel(model_name)
+        response = model.generate_content(
+            prompt,
+            generation_config={"max_output_tokens": 128, "temperature": 0.1},
+        )
+        return getattr(response, "text", "").strip()
+
+    try:
+        raw = await asyncio.to_thread(_call)
+        # Strip any accidental markdown fences
+        raw = raw.strip().lstrip("```json").lstrip("```").rstrip("```").strip()
+        return json.loads(raw)
+    except Exception:
+        return {"intent": "unknown", "params": {}}
+

@@ -19,7 +19,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 
 from .elevenlabs_client import is_available as tts_is_available, synthesize_speech
-from .gemini_client import describe_scene, is_available as gemini_is_available
+from .gemini_client import describe_scene, interpret_voice, is_available as gemini_is_available
 from .ocr import ocr_is_available, recognize_text
 from .person_memory import (
     face_lib_available,
@@ -473,6 +473,19 @@ async def navigate_speak_step(text: str = Form(...)) -> Dict[str, str]:
         "audio_base64": base64.b64encode(audio_bytes).decode("utf-8"),
         "mime_type": "audio/mpeg",
     }
+
+
+@app.post("/voice/interpret")
+async def voice_interpret(payload: dict):
+    """
+    Accepts {"phrase": "..."} and returns {"intent": "...", "params": {...}}.
+    Uses Gemini to understand free-form speech commands.
+    """
+    phrase = (payload.get("phrase") or "").strip()
+    if not phrase:
+        return {"intent": "unknown", "params": {}}
+    result = await interpret_voice(phrase)
+    return result
 
 
 @app.post("/navigate/scan_obstacles")
