@@ -121,7 +121,7 @@ class VoiceCommander {
       return true;
     }
 
-    // Already activated � any phrase is the command
+    // Already activated � any phrase is the command
     if (this._activated) {
       this._deactivate();
       this._onChange?.("listening");
@@ -178,20 +178,76 @@ class VoiceCommander {
       const data = await res.json();
       console.log("[Voice] Gemini response:", data);
       this._onChange?.("listening");
-      this._dispatch(data.intent || "unknown", data.params || {});
+      // If Gemini returns unknown, try one more keyword pass on the full phrase
+      if (data.intent === "unknown" || !data.intent) {
+        const fallback = this._keywordFallback(phrase);
+        this._dispatch(fallback.intent, fallback.params);
+      } else {
+        this._dispatch(data.intent, data.params || {});
+      }
     } catch (err) {
       console.error("[Voice] Gemini error:", err);
       this._onChange?.("listening");
-      this._dispatch("unknown", { raw: phrase });
+      const fallback = this._keywordFallback(phrase);
+      this._dispatch(fallback.intent, fallback.params);
     }
   }
 
+  // Broad keyword fallback — used when Gemini is unavailable or returns unknown
+  _keywordFallback(phrase) {
+    if (/\b(scan|describe|look|see|around|front|surroundings)\b/.test(phrase))
+      return { intent: "scan_scene", params: {} };
+    if (/\b(read|text|sign|written|label)\b/.test(phrase))
+      return { intent: "read_text", params: {} };
+    if (/\b(who|identify|face|person)\b/.test(phrase))
+      return { intent: "identify_person", params: {} };
+    if (/\b(stop|end|cancel)\b/.test(phrase))
+      return { intent: "stop_navigation", params: {} };
+    if (/\b(help|assist|commands)\b/.test(phrase))
+      return { intent: "help", params: {} };
+    // Navigate — last chance
+    const navM = phrase.match(/\b(?:go|navigate|directions?)\b.*?\bto\b\s+([\w\s,]+)/i);
+    if (navM) return { intent: "navigate", params: { destination: navM[1].trim() } };
+    return { intent: "unknown", params: { raw: phrase } };
+  }
+
   _instantMatch(cmd) {
-    if (/^\s*stop\s*$/.test(cmd))                   return { intent: "stop_navigation", params: {} };
-    if (/^\s*help\s*$/.test(cmd))                   return { intent: "help", params: {} };
-    if (/^\s*(?:scan|describe|look)\s*$/.test(cmd)) return { intent: "scan_scene", params: {} };
-    if (/^\s*(?:read|text|ocr)\s*$/.test(cmd))      return { intent: "read_text", params: {} };
-    if (/^\s*(?:identify|who)\s*$/.test(cmd))       return { intent: "identify_person", params: {} };
+    // Stop / navigation
+    if (/\bstop\b/.test(cmd) && !/navigate|go to|take me/i.test(cmd))
+      return { intent: "stop_navigation", params: {} };
+
+    // Help
+    if (/\bhelp\b|\bwhat can you do\b|\bcommands\b/.test(cmd))
+      return { intent: "help", params: {} };
+
+    // Scan / describe scene
+    if (/\b(scan|describe|look|see|what.*(around|there|here|front|this)|tell me what|surroundings|environment)\b/.test(cmd))
+      return { intent: "scan_scene", params: {} };
+
+    // Read text / OCR
+    if (/\b(read|text|ocr|sign|words|written|writing|label|message)\b/.test(cmd))
+      return { intent: "read_text", params: {} };
+
+    // Identify person / face
+    if (/\b(identify|who.*is|recogni[sz]e|face|person|people)\b/.test(cmd))
+      return { intent: "identify_person", params: {} };
+
+    // Remember / save person
+    const rememberMatch = cmd.match(/\b(?:remember|save|learn|add)\b.*\bnamed?\s+([\w\s]+)/);
+    if (rememberMatch)
+      return { intent: "remember_person", params: { name: rememberMatch[1].trim() } };
+
+    // Start / stop camera
+    if (/\b(start|open|turn on|enable)\b.*\bcamera\b|\bcamera\b.*\b(start|on)\b/.test(cmd))
+      return { intent: "start_camera", params: {} };
+    if (/\b(stop|close|turn off|disable)\b.*\bcamera\b|\bcamera\b.*\b(stop|off)\b/.test(cmd))
+      return { intent: "stop_camera", params: {} };
+
+    // Navigate — extract destination
+    const navMatch = cmd.match(/\b(?:navigate|go|take me|directions?|how do i get)\b.*?\bto\b\s+([\w\s,]+?)(?:\s*$|\s*please)/i);
+    if (navMatch && navMatch[1])
+      return { intent: "navigate", params: { destination: navMatch[1].trim() } };
+
     return null;
   }
 

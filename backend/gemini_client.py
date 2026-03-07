@@ -13,6 +13,11 @@ try:
 except Exception:  # pragma: no cover - optional dependency
     genai = None
 
+try:
+    from google import genai as genai_new
+except Exception:  # pragma: no cover - optional dependency
+    genai_new = None
+
 from .vision import summarize_objects
 
 DEFAULT_SCENE_PROMPT = "Describe this image clearly for a visually impaired user."
@@ -198,27 +203,44 @@ Return ONLY the JSON object. No explanation.
 
 async def interpret_voice(phrase: str) -> dict:
     """Use Gemini to classify a voice command into a structured intent dict."""
-    if genai is None or not os.getenv("GEMINI_API_KEY"):
+    api_key = os.getenv("GEMINI_API_KEY", "").strip()
+    if not api_key:
         return {"intent": "unknown", "params": {}}
 
-    api_key = os.getenv("GEMINI_API_KEY", "").strip()
-    prompt  = _INTENT_PROMPT.format(phrase=phrase.strip())
+    prompt     = _INTENT_PROMPT.format(phrase=phrase.strip())
     model_name = os.getenv("GEMINI_MODEL", "gemini-2.0-flash")
 
-    def _call() -> str:
-        genai.configure(api_key=api_key)
-        model = genai.GenerativeModel(model_name)
-        response = model.generate_content(
-            prompt,
-            generation_config={"max_output_tokens": 128, "temperature": 0.1},
-        )
-        return getattr(response, "text", "").strip()
+    # Prefer the new google-genai SDK; fall back to deprecated google-generativeai
+    if genai_new is not None:
+        def _call() -> str:
+            client = genai_new.Client(api_key=api_key)
+            response = client.models.generate_content(
+                model=model_name,
+                contents=prompt,
+                config={"max_output_tokens": 128, "temperature": 0.1},
+            )
+            return (response.text or "").strip()
+    elif genai is not None:
+        def _call() -> str:
+            genai.configure(api_key=api_key)
+            model = genai.GenerativeModel(model_name)
+            response = model.generate_content(
+                prompt,
+                generation_config={"max_output_tokens": 128, "temperature": 0.1},
+            )
+            return getattr(response, "text", "").strip()
+    else:
+        print("[interpret_voice] No Gemini SDK available")
+        return {"intent": "unknown", "params": {}}
 
     try:
         raw = await asyncio.to_thread(_call)
         # Strip any accidental markdown fences
         raw = raw.strip().lstrip("```json").lstrip("```").rstrip("```").strip()
         return json.loads(raw)
-    except Exception:
+    except Exception as e:
+        import traceback
+        print(f"[interpret_voice] ERROR: {e}")
+        traceback.print_exc()
         return {"intent": "unknown", "params": {}}
 
