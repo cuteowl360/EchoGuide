@@ -1,0 +1,153 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Create Account – EchoGuide</title>
+    <link rel="stylesheet" href="/static/style.css" />
+  </head>
+  <body>
+    <main class="auth-shell">
+      <div class="auth-card">
+
+        <div class="auth-logo-wrap">
+          <div class="auth-logo-icon">
+            <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
+          </div>
+          <h1 class="auth-logo">EchoGuide</h1>
+          <p class="auth-tagline">AI vision assistant</p>
+        </div>
+
+        <h2 class="auth-heading">Create your account</h2>
+
+        <form id="registerForm" class="auth-form" novalidate>
+          <div class="input-group">
+            <label for="username">
+              Username
+              <span class="auth-hint">3–32 chars · letters, numbers, _ or -</span>
+            </label>
+            <input
+              id="username" name="username" type="text"
+              autocomplete="username" placeholder="your_username"
+              required minlength="3" maxlength="32" pattern="[A-Za-z0-9_\-]+"
+            />
+          </div>
+
+          <div class="input-group">
+            <label for="email">Email address</label>
+            <input
+              id="email" name="email" type="email"
+              autocomplete="email" placeholder="you@example.com" required
+            />
+          </div>
+
+          <div class="input-group">
+            <label for="password">
+              Password
+              <span class="auth-hint">At least 8 characters</span>
+            </label>
+            <input
+              id="password" name="password" type="password"
+              autocomplete="new-password" placeholder="••••••••"
+              required minlength="8"
+            />
+          </div>
+
+          <div class="input-group">
+            <label for="confirm">Confirm password</label>
+            <input
+              id="confirm" name="confirm" type="password"
+              autocomplete="new-password" placeholder="••••••••"
+              required minlength="8"
+            />
+          </div>
+
+          <div id="registerError" class="auth-error hidden" role="alert"></div>
+
+          <button type="submit" class="btn auth-btn">Create Account</button>
+        </form>
+
+        <p class="auth-switch">Already have an account? <a href="/login">Sign in</a></p>
+      </div>
+    </main>
+    <script src="/static/auth.js" defer></script>
+  </body>
+</html>
+  </head>
+  <body>
+    <main class="auth-shell">
+      <div class="auth-card">
+        <div class="auth-logo-wrap">
+          <h1 class="auth-logo">EchoGuide</h1>
+          <p class="auth-tagline">Artificial eye for the visually impaired.</p>
+        </div>
+
+        <h2 class="auth-heading">Create your account</h2>
+
+        <form id="registerForm" class="auth-form" novalidate>
+          <label for="username">
+            Username
+            <span class="auth-hint">3–32 chars · letters, numbers, _ or -</span>
+          </label>
+          <input
+            id="username"
+            name="username"
+            type="text"
+            autocomplete="username"
+            placeholder="your_username"
+            required
+            minlength="3"
+            maxlength="32"
+            pattern="[A-Za-z0-9_\-]+"
+          />
+
+          <label for="email">Email address</label>
+          <input
+            id="email"
+            name="email"
+            type="email"
+            autocomplete="email"
+            placeholder="you@example.com"
+            required
+          />
+
+          <label for="password">
+            Password
+            <span class="auth-hint">At least 8 characters</span>
+          </label>
+          <input
+            id="password"
+            name="password"
+            type="password"
+            autocomplete="new-password"
+            placeholder="••••••••"
+            required
+            minlength="8"
+          />
+
+          <label for="confirm">Confirm password</label>
+          <input
+            id="confirm"
+            name="confirm"
+            type="password"
+            autocomplete="new-password"
+            placeholder="••••••••"
+            required
+            minlength="8"
+          />
+
+          <div id="registerError" class="auth-error hidden" role="alert"></div>
+
+          <button type="submit" class="btn btn-primary auth-btn">Create Account</button>
+        </form>
+
+        <p class="auth-switch">
+          Already have an account?
+          <a href="/login">Sign in</a>
+        </p>
+      </div>
+    </main>
+
+    <script src="/static/auth.js" defer></script>
+  </body>
+</html>

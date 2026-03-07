@@ -28,6 +28,7 @@ from .person_memory import (
     remember_person as remember_person_from_frame,
 )
 from .vision import detect_objects, model_is_available, summarize_objects
+from . import auth as _auth
 
 load_dotenv()
 
@@ -52,6 +53,13 @@ app.add_middleware(
 )
 
 app.mount("/static", StaticFiles(directory=str(FRONTEND_DIR)), name="static")
+
+# Auth routes (/auth/register, /auth/login, /auth/logout, /auth/me)
+app.include_router(_auth.router)
+
+@app.on_event("startup")
+def _startup() -> None:
+    _auth.init_db()
 
 
 def _decode_frame(image_bytes: bytes) -> np.ndarray:
@@ -102,6 +110,24 @@ async def root() -> FileResponse:
     if not index_file.exists():
         raise HTTPException(status_code=500, detail="Frontend not found.")
     return FileResponse(index_file)
+
+
+@app.get("/login")
+async def login_page() -> FileResponse:
+    """Serve the login page."""
+    page = FRONTEND_DIR / "login.html"
+    if not page.exists():
+        raise HTTPException(status_code=500, detail="Login page not found.")
+    return FileResponse(page)
+
+
+@app.get("/register")
+async def register_page() -> FileResponse:
+    """Serve the account creation page."""
+    page = FRONTEND_DIR / "register.html"
+    if not page.exists():
+        raise HTTPException(status_code=500, detail="Register page not found.")
+    return FileResponse(page)
 
 
 @app.post("/analyze_scene")

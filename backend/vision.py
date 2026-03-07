@@ -30,7 +30,7 @@ def get_model_path() -> str:
         if candidate.is_file():
             return str(candidate)
 
-    local_model = (Path(__file__).resolve().parents[1] / "models" / "yolov8.pt").resolve()
+    local_model = (Path(__file__).resolve().parents[1] / "models" / "yolov8n.pt").resolve()
     if local_model.is_file():
         return str(local_model)
 

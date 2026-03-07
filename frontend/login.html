@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Sign In – EchoGuide</title>
+    <link rel="stylesheet" href="/static/style.css" />
+  </head>
+  <body>
+    <main class="auth-shell">
+      <div class="auth-card">
+
+        <div class="auth-logo-wrap">
+          <div class="auth-logo-icon">
+            <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
+          </div>
+          <h1 class="auth-logo">EchoGuide</h1>
+          <p class="auth-tagline">AI vision assistant</p>
+        </div>
+
+        <h2 class="auth-heading">Welcome back</h2>
+
+        <form id="loginForm" class="auth-form" novalidate>
+          <div class="input-group">
+            <label for="username">Username</label>
+            <input
+              id="username" name="username" type="text"
+              autocomplete="username" placeholder="your_username" required
+            />
+          </div>
+
+          <div class="input-group">
+            <label for="password">Password</label>
+            <input
+              id="password" name="password" type="password"
+              autocomplete="current-password" placeholder="••••••••" required
+            />
+          </div>
+
+          <div id="loginError" class="auth-error hidden" role="alert"></div>
+
+          <button type="submit" class="btn auth-btn">Sign In</button>
+        </form>
+
+        <p class="auth-switch">No account? <a href="/register">Create one</a></p>
+      </div>
+    </main>
+    <script src="/static/auth.js" defer></script>
+  </body>
+</html>

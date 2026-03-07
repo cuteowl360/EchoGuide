@@ -1,0 +1,111 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <title>EchoGuide</title>
+    <meta name="description" content="AI vision assistant for the visually impaired." />
+    <link rel="stylesheet" href="/static/style.css" />
+  </head>
+  <body>
+    <main class="app-shell">
+
+      <!-- Top bar -->
+      <header class="topbar glass">
+        <div class="topbar-brand">
+          <h1>EchoGuide</h1>
+          <p>AI vision assistant</p>
+        </div>
+        <div class="topbar-user hidden" id="userBar">
+          <div class="user-pill">
+            <div class="user-avatar" id="userAvatar">?</div>
+            <span id="userGreeting"></span>
+          </div>
+          <button id="logoutBtn" class="btn-link">Sign out</button>
+        </div>
+      </header>
+
+      <!-- Camera viewport -->
+      <section class="video-card" aria-label="Camera feed">
+        <video id="camera" playsinline autoplay muted></video>
+        <canvas id="captureCanvas"></canvas>
+        <div class="camera-idle-overlay" id="idleOverlay">
+          <div class="camera-idle-icon">
+            <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="rgba(160,185,255,0.7)" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></svg>
+          </div>
+          <p>Tap Start Camera to begin</p>
+        </div>
+        <div class="scan-ring" id="scanRing"></div>
+      </section>
+
+      <!-- Action buttons -->
+      <section class="controls" aria-label="Actions">
+        <button id="startBtn" class="btn btn-start">
+          <span class="btn-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><polygon points="5,3 19,12 5,21"/></svg></span>
+          <span class="btn-label">Start Camera</span>
+        </button>
+        <button id="scanSceneBtn" class="btn btn-scan">
+          <span class="btn-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg></span>
+          <span class="btn-label">Scan Scene</span>
+        </button>
+        <button id="readTextBtn" class="btn btn-ocr">
+          <span class="btn-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14,2 14,8 20,8"/><line x1="8" y1="13" x2="16" y2="13"/><line x1="8" y1="17" x2="14" y2="17"/></svg></span>
+          <span class="btn-label">Read Text</span>
+        </button>
+        <button id="rememberPersonBtn" class="btn btn-remember">
+          <span class="btn-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2a7 7 0 0 1 7 7c0 3-1.5 5-4 6.5V18a1 1 0 0 1-1 1h-4a1 1 0 0 1-1-1v-2.5C6.5 14 5 12 5 9a7 7 0 0 1 7-7z"/><line x1="9" y1="21" x2="15" y2="21"/><line x1="9" y1="18" x2="15" y2="18"/></svg></span>
+          <span class="btn-label">Remember</span>
+        </button>
+        <button id="identifyPersonBtn" class="btn btn-identify">
+          <span class="btn-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg></span>
+          <span class="btn-label">Identify</span>
+        </button>
+      </section>
+
+      <!-- Status -->
+      <div class="status-bar glass" role="status" aria-live="polite">
+        <span class="status-dot" id="statusDot"></span>
+        <span class="status-text" id="status">Camera is off. Press Start to begin.</span>
+      </div>
+
+      <!-- Results -->
+      <section class="result-panel glass" aria-live="polite">
+        <div class="result-section">
+          <span class="result-label">AI Response</span>
+          <p class="result-value answer" id="answer">No response yet.</p>
+        </div>
+        <div class="divider"></div>
+        <div class="result-section">
+          <span class="result-label">Detected Objects</span>
+          <ul class="tag-list" id="objects"></ul>
+        </div>
+        <div class="divider"></div>
+        <div class="result-section">
+          <span class="result-label">Read Text</span>
+          <p class="result-value" id="ocrText" style="white-space:pre-wrap">None</p>
+        </div>
+      </section>
+
+      <audio id="audioPlayer" class="hidden" controls></audio>
+
+    </main>
+
+    <script src="/static/app.js" defer></script>
+    <script>
+      (async function () {
+        try {
+          const res = await fetch("/auth/me", { credentials: "same-origin" });
+          if (res.status === 401) { window.location.replace("/login"); return; }
+          const { username } = await res.json();
+          document.getElementById("userGreeting").textContent = username;
+          document.getElementById("userAvatar").textContent = username[0].toUpperCase();
+          document.getElementById("userBar").classList.remove("hidden");
+          document.getElementById("logoutBtn").addEventListener("click", async () => {
+            await fetch("/auth/logout", { method: "POST", credentials: "same-origin" });
+            window.location.replace("/login");
+          });
+        } catch (_) {}
+      })();
+    </script>
+  </body>
+</html>

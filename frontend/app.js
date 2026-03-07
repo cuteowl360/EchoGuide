@@ -8,16 +8,20 @@ const readTextBtn = document.getElementById("readTextBtn");
 const rememberPersonBtn = document.getElementById("rememberPersonBtn");
 const identifyPersonBtn = document.getElementById("identifyPersonBtn");
 const statusEl = document.getElementById("status");
+const statusDot = document.getElementById("statusDot");
 const answerEl = document.getElementById("answer");
 const objectsEl = document.getElementById("objects");
 const ocrTextEl = document.getElementById("ocrText");
 const audioPlayer = document.getElementById("audioPlayer");
+const idleOverlay = document.getElementById("idleOverlay");
+const scanRing = document.getElementById("scanRing");
 
 let stream = null;
 let isBusy = false;
 
-function setStatus(message) {
+function setStatus(message, state) {
   statusEl.textContent = message;
+  statusDot.className = "status-dot" + (state ? " " + state : "");
 }
 
 function setActionState(working) {
@@ -42,16 +46,18 @@ function renderObjects(detectedObjects) {
   objectsEl.innerHTML = "";
   if (!detectedObjects || detectedObjects.length === 0) {
     const li = document.createElement("li");
-    li.textContent = "No objects confidently detected.";
+    li.textContent = "Nothing detected.";
+    li.style.color = "rgba(160,185,230,0.45)";
+    li.style.listStyle = "none";
     objectsEl.appendChild(li);
     return;
   }
-
   for (const item of detectedObjects) {
     const li = document.createElement("li");
+    li.className = "tag";
     const confidence = Math.round((item.confidence ?? 0) * 100);
     const label = item.label || "Object";
-    li.textContent = `${label} (${confidence}%)`;
+    li.textContent = `${label} ${confidence}%`;
     objectsEl.appendChild(li);
   }
 }
@@ -130,7 +136,8 @@ async function runAction(path, formData) {
   if (isBusy) return;
   isBusy = true;
   setActionState(true);
-  setStatus("Capturing and processing...");
+  scanRing.classList.add("active");
+  setStatus("Capturing and processing…", "working");
 
   try {
     const data = await callJsonEndpoint(path, formData);
@@ -148,16 +155,17 @@ async function runAction(path, formData) {
     }
 
     await speakText(description);
-    setStatus("Done.");
+    setStatus("Done.", "active");
   } catch (error) {
     const message = error?.message || "Action failed.";
     answerEl.textContent = `Error: ${message}`;
     ocrTextEl.textContent = "";
     objectsEl.innerHTML = "";
-    setStatus(message);
+    setStatus(message, "error");
     speakFallback(message);
   } finally {
     isBusy = false;
+    scanRing.classList.remove("active");
     setActionState(false);
   }
 }
@@ -227,20 +235,24 @@ async function startCamera() {
   });
     video.srcObject = stream;
     await video.play();
-    setStatus("Camera active. Tap an action.");
-    startBtn.textContent = "Restart Camera";
+    idleOverlay.classList.add("hidden");
+    setStatus("Camera active. Tap an action.", "active");
+    startBtn.querySelector(".btn-icon").innerHTML = '<svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><rect x="4" y="4" width="16" height="16" rx="2"/></svg>';
+    startBtn.querySelector(".btn-label").textContent = "Stop Camera";
   } catch (error) {
-    setStatus("Camera access denied or unavailable.");
+    setStatus("Camera access denied or unavailable.", "error");
     speakFallback("Camera access denied or unavailable.");
   }
 }
 
 function stopCamera() {
   if (!stream) return;
-
   stream.getTracks().forEach((track) => track.stop());
   stream = null;
   video.srcObject = null;
+  idleOverlay.classList.remove("hidden");
+  startBtn.querySelector(".btn-icon").innerHTML = '<svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><polygon points="5,3 19,12 5,21"/></svg>';
+  startBtn.querySelector(".btn-label").textContent = "Start Camera";
   setStatus("Camera stopped.");
 }
 
