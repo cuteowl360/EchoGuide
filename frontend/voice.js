@@ -1,4 +1,4 @@
-﻿/**
+/**
  * EchoGuide - Voice Command Module
  *
  * Uses the browser's built-in Web Speech API for speech-to-text (no key needed).
@@ -6,7 +6,7 @@
  * which uses Gemini to understand the intent - handling unlimited variations,
  * accents, and casual phrasing.
  *
- * Wake word: "echo" (or "hey echo", "ok echo", "yo echo" etc.)
+ * Wake word: "echo" (or "hey echo", "ok echo", "yo echo", "eco", "ecco" etc.)
  */
 
 "use strict";
@@ -22,7 +22,7 @@ class VoiceCommander {
     this._activatedTimer = null;
     this._onCommand      = null;
     this._onChange       = null;
-    this._onTranscript   = null;  // called with every heard phrase for debug display
+    this._onTranscript   = null;
     this.supported       = !!(window.SpeechRecognition || window.webkitSpeechRecognition);
   }
 
@@ -41,12 +41,14 @@ class VoiceCommander {
     this._rec.maxAlternatives = 3;
 
     this._rec.onresult = (e) => {
-      const results = Array.from(e.results).slice(e.resultIndex);
-      for (const result of results) {
-        // Try all recognition alternatives
-        const alternatives = Array.from(result).map(a => a.transcript.trim().toLowerCase());
+      for (let i = e.resultIndex; i < e.results.length; i++) {
+        if (!e.results[i].isFinal) continue;
+        const alternatives = [];
+        for (let j = 0; j < e.results[i].length; j++) {
+          alternatives.push(e.results[i][j].transcript.trim().toLowerCase());
+        }
         console.log("[Voice] heard:", alternatives);
-        this._onTranscript?.(alternatives[0]); // show top result in UI
+        if (this._onTranscript) this._onTranscript(alternatives[0]);
         for (const transcript of alternatives) {
           if (this._process(transcript)) break;
         }
@@ -60,6 +62,7 @@ class VoiceCommander {
     };
 
     this._rec.onerror = (e) => {
+      console.error("[Voice] SpeechRecognition error:", e.error);
       if (e.error === "no-speech" || e.error === "aborted") return;
       if (e.error === "not-allowed") {
         this._active = false;
@@ -76,7 +79,8 @@ class VoiceCommander {
       this._rec.start();
       this._onChange("listening");
       return true;
-    } catch (_) {
+    } catch (err) {
+      console.error("[Voice] Failed to start SpeechRecognition:", err);
       this._active = false;
       return false;
     }
@@ -117,7 +121,7 @@ class VoiceCommander {
       return true;
     }
 
-    // Already activated — any phrase is the command
+    // Already activated � any phrase is the command
     if (this._activated) {
       this._deactivate();
       this._onChange?.("listening");
@@ -126,20 +130,29 @@ class VoiceCommander {
       return true;
     }
 
-    // Simple, lenient wake word check — does the phrase contain "echo"?
-    if (!transcript.includes("echo")) return false;
+    // Lenient wake word check
+    // Accepts: echo, eco, ecco, echo guide, hey echo, ok echo, yo echo, etc.
+    const hasWakeWord = (
+      transcript.includes("echo") ||
+      transcript.includes("eco ") ||
+      /\beco$/.test(transcript)   ||
+      transcript.includes("ecco") ||
+      transcript.includes("echo guide")
+    );
+    if (!hasWakeWord) return false;
 
-    // Extract what came AFTER "echo"
-    const afterEcho = transcript.split("echo").slice(1).join("echo").replace(/^[,. ]+/, "").trim();
-    console.log("[Voice] wake word detected, command:", afterEcho);
+    // Extract what came AFTER the wake word
+    let afterWake = transcript
+      .replace(/.*\b(?:hey |ok(?:ay)? |yo )?(?:echo(?:\s?guide)?|eco|ecco)\b[,. ]*/i, "")
+      .trim();
+    console.log("[Voice] wake detected, command phrase:", afterWake || "(none)");
 
-    if (!afterEcho) {
-      // Heard "echo" alone — enter activated mode
+    if (!afterWake) {
       this._activate();
       return true;
     }
 
-    this._handlePhrase(afterEcho);
+    this._handlePhrase(afterWake);
     return true;
   }
 
@@ -169,167 +182,6 @@ class VoiceCommander {
     } catch (err) {
       console.error("[Voice] Gemini error:", err);
       this._onChange?.("listening");
-      this._dispatch("unknown", { raw: phrase });
-    }
-  }
-
-  _instantMatch(cmd) {
-    if (/^\s*stop\s*$/.test(cmd))                   return { intent: "stop_navigation", params: {} };
-    if (/^\s*help\s*$/.test(cmd))                   return { intent: "help", params: {} };
-    if (/^\s*(?:scan|describe|look)\s*$/.test(cmd)) return { intent: "scan_scene", params: {} };
-    if (/^\s*(?:read|text|ocr)\s*$/.test(cmd))      return { intent: "read_text", params: {} };
-    if (/^\s*(?:identify|who)\s*$/.test(cmd))       return { intent: "identify_person", params: {} };
-    return null;
-  }
-
-  _dispatch(intent, params) {
-    if (intent === "remember_person" && !params.name) {
-      this._onCommand("ask_for_name", {});
-      this._awaitingName = true;
-      return;
-    }
-    this._onCommand(intent, params);
-  }
-}
-
-const voiceCommander = new VoiceCommander();
-
-class VoiceCommander {
-  constructor() {
-    this._rec            = null;
-    this._active         = false;
-    this._awaitingName   = false;
-    this._activated      = false;
-    this._activatedTimer = null;
-    this._onCommand      = null;
-    this._onChange       = null;
-    this.supported       = !!(window.SpeechRecognition || window.webkitSpeechRecognition);
-  }
-
-  start(onCommand, onStateChange) {
-    const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
-    if (!SR) return false;
-
-    this._onCommand = onCommand;
-    this._onChange  = onStateChange || (() => {});
-
-    this._rec = new SR();
-    this._rec.continuous      = true;
-    this._rec.interimResults  = false;
-    this._rec.lang            = "en-US";
-    this._rec.maxAlternatives = 3;
-
-    this._rec.onresult = (e) => {
-      const results = Array.from(e.results).slice(e.resultIndex);
-      for (const result of results) {
-        const alternatives = Array.from(result).map(a => a.transcript.trim().toLowerCase());
-        for (const transcript of alternatives) {
-          if (this._process(transcript)) break;
-        }
-      }
-    };
-
-    this._rec.onend = () => {
-      if (this._active) {
-        setTimeout(() => { try { this._rec.start(); } catch (_) {} }, 200);
-      }
-    };
-
-    this._rec.onerror = (e) => {
-      if (e.error === "no-speech" || e.error === "aborted") return;
-      if (e.error === "not-allowed") {
-        this._active = false;
-        this._onChange("error");
-        return;
-      }
-      if (this._active) {
-        setTimeout(() => { try { this._rec.start(); } catch (_) {} }, 1000);
-      }
-    };
-
-    this._active = true;
-    try {
-      this._rec.start();
-      this._onChange("listening");
-      return true;
-    } catch (_) {
-      this._active = false;
-      return false;
-    }
-  }
-
-  stop() {
-    this._active       = false;
-    this._awaitingName = false;
-    this._deactivate();
-    try { this._rec?.stop(); } catch (_) {}
-    this._onChange?.("stopped");
-  }
-
-  _activate() {
-    this._activated = true;
-    this._onChange?.("activated");
-    clearTimeout(this._activatedTimer);
-    this._activatedTimer = setTimeout(() => {
-      if (this._activated) {
-        this._deactivate();
-        this._onChange?.("listening");
-      }
-    }, ACTIVATED_TIMEOUT_MS);
-  }
-
-  _deactivate() {
-    this._activated = false;
-    clearTimeout(this._activatedTimer);
-    this._activatedTimer = null;
-  }
-
-  _process(transcript) {
-    if (this._awaitingName) {
-      this._awaitingName = false;
-      const name = transcript.trim();
-      if (name) this._onCommand("remember_person", { name });
-      return true;
-    }
-
-    if (this._activated) {
-      this._deactivate();
-      this._onChange?.("listening");
-      this._handlePhrase(transcript.trim());
-      return true;
-    }
-
-    const wakeMatch = transcript.match(/\b(?:hey |ok(?:ay)? |yo )?echo[,.]?\s*(.*)/);
-    if (!wakeMatch) return false;
-
-    const phrase = wakeMatch[1].trim();
-
-    if (!phrase) {
-      this._activate();
-      return true;
-    }
-
-    this._handlePhrase(phrase);
-    return true;
-  }
-
-  async _handlePhrase(phrase) {
-    const instant = this._instantMatch(phrase);
-    if (instant) {
-      this._dispatch(instant.intent, instant.params);
-      return;
-    }
-
-    try {
-      const res = await fetch("/voice/interpret", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ phrase }),
-      });
-      if (!res.ok) throw new Error("interpret failed");
-      const data = await res.json();
-      this._dispatch(data.intent || "unknown", data.params || {});
-    } catch (_) {
       this._dispatch("unknown", { raw: phrase });
     }
   }

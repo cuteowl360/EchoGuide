@@ -456,7 +456,7 @@ function _startVoice() {
       voiceLabel.textContent = "Processing…";
     } else if (state === "error") {
       voicePill.className = "voice-pill error";
-      voiceLabel.textContent = "Mic blocked";
+      voiceLabel.textContent = "Mic error — tap to retry";
     } else {
       voicePill.className = "voice-pill";
       voiceLabel.textContent = "Voice off";
@@ -464,7 +464,16 @@ function _startVoice() {
   }, (transcript) => {
     setStatus(`Heard: "${transcript}"`);
   });
-  if (ok) _voiceStarted = true;
+  if (ok) {
+    _voiceStarted = true;
+    setStatus('Microphone active. Say "Echo" to give a command.');
+    speakFallback('EchoGuide ready. Say Echo to activate.');
+  } else {
+    console.error("[Voice] Failed to start — mic may be blocked or unsupported.");
+    voicePill.className = "voice-pill error";
+    voiceLabel.textContent = "Mic error — tap to retry";
+    setStatus("Microphone failed to start. Tap the mic icon to retry.");
+  }
 }
 
 // Tap the voice pill to retry mic if it failed
@@ -486,11 +495,17 @@ window.addEventListener("load", () => {
 
   function _dismissOverlay() {
     overlay.classList.add("hidden");
-    // Start camera immediately on the user gesture
-    startCamera();
-    // Start mic on the same gesture — guaranteed to work
-    _startVoice();
-    setStatus('Camera and mic active. Say "Echo" to give a command.');
+    // Start camera first — then start mic after it's ready to avoid
+    // Chrome silently failing when both media APIs are requested at once
+    startCamera().then(() => {
+      setTimeout(() => {
+        _startVoice();
+      }, 400);
+    }).catch(() => {
+      // Camera failed, but still try mic
+      setTimeout(_startVoice, 400);
+    });
+    setStatus('Starting camera and microphone…');
   }
 
   // Both the button and clicking anywhere on the overlay work
