@@ -20,9 +20,10 @@ class GuideMode {
     this._scanCount = 0;
     this._lastMessage = null;
 
-    // Guide mode cadence and announcement throttle.
-    this.INTERVAL_MS    = 2000;
+    // Keep scan loop fast for responsive object updates.
+    this.INTERVAL_MS    = Number(options.intervalMs) > 0 ? Number(options.intervalMs) : 300;
     this._onGuidance    = options.onGuidance    || (() => {});  // (text, isDanger)
+    this._onDetections  = options.onDetections  || (() => {});  // (detections)
     this._onScanLog     = options.onScanLog     || (() => {});  // (entry: object)
     this._onStateChange = options.onStateChange || (() => {});  // (active)
   }
@@ -75,11 +76,12 @@ class GuideMode {
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
 
       const data = await res.json();
-      const message = data.message || null;
-      const direction = data.direction || null;
-      const isDanger = data.is_danger === true
-        || (typeof message === "string" && message.includes("Warning. You are now in the danger zone for this obstacle."));
-      const hasNewSpeech = this._handleGuideResponse(data);
+      const processed = this._processGuideResponse(data);
+      const message = processed.message;
+      const direction = processed.direction;
+      const isDanger = processed.isDanger;
+      const detectionCount = processed.detections.length;
+      const hasNewSpeech = processed.hasNewSpeech;
 
       console.log(
         `[GuideSession] Scan #${scanId} response`,
@@ -90,7 +92,7 @@ class GuideMode {
         id: scanId,
         guidance: message || "",
         isDanger,
-        detectionCount: data.detection_count ?? null,
+        detectionCount: detectionCount || data.detection_count || 0,
       });
       if (hasNewSpeech) {
         console.log(`[GuideSession] Scan #${scanId} spoke message:`, message);
@@ -117,7 +119,20 @@ class GuideMode {
     );
   }
 
-  _handleGuideResponse(data) {
+  _processGuideResponse(data) {
+    const detections = Array.isArray(data?.detections) ? data.detections : [];
+    this._onDetections(detections);
+
+    const message = data?.message || null;
+    const direction = data?.direction || null;
+    const isDanger = data?.is_danger === true
+      || (typeof message === "string" && message.includes("Warning. You are now in the danger zone for this obstacle."));
+    const hasNewSpeech = this._handleSpeech(data);
+
+    return { detections, message, direction, isDanger, hasNewSpeech };
+  }
+
+  _handleSpeech(data) {
     const message = data?.message || null;
     if (!message || message === this._lastMessage) return false;
     this.speak(message);

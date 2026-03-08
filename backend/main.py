@@ -770,9 +770,11 @@ async def guide_scan(image: UploadFile = File(...)) -> Dict[str, Any]:
     )
 
     return {
+        "detections":  detections,
         "distance":    distance_m,
         "direction":   direction,
         "message":     message,
+        "guidance":    message,
         "is_danger":   is_danger,
         "detection_count": len(detections),
     }

@@ -421,8 +421,11 @@ const guideDangerBanner = document.getElementById("guideDangerBanner");
 const guideDangerText   = document.getElementById("guideDangerText");
 
 const guideMode = new GuideMode(video, canvas, {
-  intervalMs: 2000,
+  intervalMs: 300,
   guideAnnouncementIntervalMs: 2000,
+  onDetections: (detections) => {
+    renderObjects(detections || []);
+  },
   onGuidance: (text, isDanger) => {
     guideGuidanceEl.textContent = text;
     if (isDanger) {
