@@ -21,7 +21,7 @@ class GuideMode {
     this._lastMessage = null;
     this._lastSpokenObject = null;
     this._elevenLabsApiKey = options.elevenLabsApiKey || window.ELEVENLABS_API_KEY || localStorage.getItem("ELEVENLABS_API_KEY") || "";
-    this._elevenLabsVoiceId = options.elevenLabsVoiceId || window.ELEVENLABS_VOICE_ID || localStorage.getItem("ELEVENLABS_VOICE_ID") || "";
+    this._elevenLabsVoiceId = options.elevenLabsVoiceId || window.ELEVENLABS_VOICE_ID || localStorage.getItem("ELEVENLABS_VOICE_ID") || "EXAVITQu4vr4xnSDxMaLz";
 
     // Keep scan loop fast for responsive object updates.
     this.INTERVAL_MS    = Number(options.intervalMs) > 0 ? Number(options.intervalMs) : 300;
@@ -158,7 +158,7 @@ class GuideMode {
     const apiKey = this._elevenLabsApiKey || "";
     const voiceId = this._elevenLabsVoiceId || "";
     if (!apiKey || !voiceId) {
-      this.speak(text);
+      await this._speakViaBackend(text);
       return;
     }
 
@@ -189,6 +189,29 @@ class GuideMode {
       await audio.play();
     } catch (err) {
       console.error("[Guide] ElevenLabs speech failed:", err);
+      await this._speakViaBackend(text);
+    }
+  }
+
+  async _speakViaBackend(text) {
+    try {
+      const form = new URLSearchParams();
+      form.append("text", text);
+      const response = await fetch("/voice_response", {
+        method: "POST",
+        body: form,
+      });
+      if (!response.ok) {
+        throw new Error(`Backend TTS HTTP ${response.status}`);
+      }
+      const blob = await response.blob();
+      const url = URL.createObjectURL(blob);
+      const audio = new Audio(url);
+      audio.onended = () => URL.revokeObjectURL(url);
+      audio.onerror = () => URL.revokeObjectURL(url);
+      await audio.play();
+    } catch (err) {
+      console.error("[Guide] Backend ElevenLabs speech failed:", err);
       this.speak(text);
     }
   }
