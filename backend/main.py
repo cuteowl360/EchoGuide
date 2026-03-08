@@ -17,7 +17,7 @@ import numpy as np
 from dotenv import load_dotenv
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, StreamingResponse
 
 from .elevenlabs_client import is_available as tts_is_available, synthesize_speech
 from .gemini_client import describe_scene, interpret_voice, is_available as gemini_is_available
@@ -439,17 +439,44 @@ async def voice_response(text: str = Form(...)):
     if not spoken:
         raise HTTPException(status_code=400, detail="Text cannot be empty.")
 
+    audio_bytes = await _generate_tts_audio(spoken)
+    return _audio_stream_response(audio_bytes)
+
+
+async def _generate_tts_audio(spoken: str) -> bytes:
+    provider = (os.getenv("TTS_PROVIDER", "polly").strip().lower() or "polly")
+    logger.info("[tts] generate start provider=%s chars=%s", provider, len(spoken))
     audio_bytes = await asyncio.to_thread(synthesize_speech, spoken)
     if audio_bytes is None:
+        logger.error("[tts] generate failed provider=%s reason=unavailable", provider)
         raise HTTPException(status_code=503, detail="TTS unavailable. Configure TTS provider credentials.")
     if not audio_bytes:
+        logger.error("[tts] generate failed provider=%s reason=empty-audio", provider)
         raise HTTPException(status_code=500, detail="No audio returned.")
+    logger.info("[tts] generate success provider=%s bytes=%s", provider, len(audio_bytes))
+    return audio_bytes
 
+
+def _audio_stream_response(audio_bytes: bytes) -> StreamingResponse:
     return StreamingResponse(
         BytesIO(audio_bytes),
         media_type="audio/mpeg",
         headers={"Cache-Control": "no-store", "Content-Disposition": "inline; filename=voice.mp3"},
     )
+
+
+@app.post("/speak")
+async def speak(payload: Dict[str, Any]) -> StreamingResponse:
+    """
+    JSON TTS endpoint.
+    Input: {"text": "..."}
+    Output: audio/mpeg stream
+    """
+    spoken = str(payload.get("text", "")).strip()
+    if not spoken:
+        raise HTTPException(status_code=400, detail="Text cannot be empty.")
+    audio_bytes = await _generate_tts_audio(spoken)
+    return _audio_stream_response(audio_bytes)
 
 
 @app.post("/read_text")

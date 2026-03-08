@@ -63,15 +63,18 @@ def synthesize_speech(text: str, voice_id: Optional[str] = None) -> Optional[byt
         return b""
 
     provider = _tts_provider()
+    logger.info("[tts-client] requested provider=%s chars=%s", provider, len(cleaned))
     if provider == "polly":
         audio = _synthesize_via_polly(cleaned)
         if audio is not None:
             return audio
+        logger.warning("[tts-client] polly unavailable/failed, falling back to elevenlabs")
         return _synthesize_via_elevenlabs(cleaned, voice_id)
     if provider == "elevenlabs":
         audio = _synthesize_via_elevenlabs(cleaned, voice_id)
         if audio is not None:
             return audio
+        logger.warning("[tts-client] elevenlabs unavailable/failed, falling back to polly")
         return _synthesize_via_polly(cleaned)
 
     # auto/unknown: prefer Polly first, then ElevenLabs.
@@ -101,6 +104,7 @@ def _synthesize_via_polly(text: str) -> Optional[bytes]:
         if stream is None:
             return b""
         audio = stream.read()
+        logger.info("[tts-client] polly synthesis success bytes=%s", len(audio or b""))
         return audio if audio else b""
     except Exception:
         logger.exception("Amazon Polly synthesis failed.")
@@ -130,8 +134,12 @@ def _synthesize_via_elevenlabs(text: str, voice_id: Optional[str] = None) -> Opt
             voice_settings={"stability": stability, "similarity_boost": similarity},
         )
         if isinstance(audio_data, (bytes, bytearray)):
-            return bytes(audio_data)
-        return b"".join(chunk for chunk in audio_data)
+            out = bytes(audio_data)
+            logger.info("[tts-client] elevenlabs sdk synthesis success bytes=%s", len(out))
+            return out
+        out = b"".join(chunk for chunk in audio_data)
+        logger.info("[tts-client] elevenlabs sdk synthesis success bytes=%s", len(out))
+        return out
     except Exception:
         return _synthesize_via_http(text, api_key, voice_id)
 
@@ -170,9 +178,11 @@ def _synthesize_via_http(text: str, api_key: str, voice_id: Optional[str] = None
         return None
 
     if response.status_code != 200:
+        logger.error("[tts-client] elevenlabs http failed status=%s", response.status_code)
         return None
 
     if not response.content:
         return b""
 
+    logger.info("[tts-client] elevenlabs http synthesis success bytes=%s", len(response.content))
     return response.content

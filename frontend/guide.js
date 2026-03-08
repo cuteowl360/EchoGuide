@@ -20,11 +20,8 @@ class GuideMode {
     this._scanCount = 0;
     this._lastMessage = null;
     this._lastSpokenObject = null;
-    this._ttsProvider = String(
-      options.ttsProvider || window.GUIDE_TTS_PROVIDER || localStorage.getItem("GUIDE_TTS_PROVIDER") || "polly"
-    ).toLowerCase();
-    this._elevenLabsApiKey = options.elevenLabsApiKey || window.ELEVENLABS_API_KEY || localStorage.getItem("ELEVENLABS_API_KEY") || "";
-    this._elevenLabsVoiceId = options.elevenLabsVoiceId || window.ELEVENLABS_VOICE_ID || localStorage.getItem("ELEVENLABS_VOICE_ID") || "EXAVITQu4vr4xnSDxMaLz";
+    this._lastPlayedTtsMessage = null;
+    this._activeAudio = null;
     this._onAssignName = options.onAssignName || null; // async ({name, signature}) -> {ok, name}
     this._namedSignatures = new Set();
     this._lastNameAttemptAt = new Map();
@@ -47,6 +44,7 @@ class GuideMode {
     this._scanCount = 0;
     this._lastMessage = null;
     this._lastSpokenObject = null;
+    this._lastPlayedTtsMessage = null;
     this._namedSignatures.clear();
     this._lastNameAttemptAt.clear();
     this._nameFlowInProgress = false;
@@ -67,6 +65,7 @@ class GuideMode {
     console.log("[GuideSession] stopped");
     this._silence();
     this._lastMessage = null;
+    this._lastPlayedTtsMessage = null;
     this._onStateChange(false);
     console.log("[Guide] stopped");
   }
@@ -151,14 +150,14 @@ class GuideMode {
     const objects = Array.isArray(data?.objects) ? data.objects : [];
     const firstObject = typeof objects[0] === "string" ? objects[0].trim().toLowerCase() : "";
     if (firstObject && firstObject !== this._lastSpokenObject) {
-      this.speakWithElevenLabs(`${firstObject} detected.`);
+      void this.playTTS(`${firstObject} detected.`);
       this._lastSpokenObject = firstObject;
       return true;
     }
 
     const message = data?.message || null;
     if (!message || message === this._lastMessage) return false;
-    this.speakWithElevenLabs(message);
+    void this.playTTS(message);
     this._lastMessage = message;
     return true;
   }
@@ -255,15 +254,15 @@ class GuideMode {
 
   async _runVoiceNamingFlow(signature) {
     this._lastNameAttemptAt.set(signature, Date.now());
-    await this.speakWithElevenLabs("Please say the name of this person.");
+    await this.playTTS("Please say the name of this person.", { dedupe: false });
 
     let spokenName = await this._listenForName(6000);
     if (!spokenName) {
-      await this.speakWithElevenLabs("I did not catch the name. Please say it again.");
+      await this.playTTS("I did not catch the name. Please say it again.", { dedupe: false });
       spokenName = await this._listenForName(6000);
     }
     if (!spokenName) {
-      await this.speakWithElevenLabs("Name capture failed. You can retry or use the remember button.");
+      await this.playTTS("Name capture failed. You can retry or use the remember button.", { dedupe: false });
       return;
     }
 
@@ -272,82 +271,44 @@ class GuideMode {
       if (result?.ok) {
         const savedName = String(result.name || spokenName).trim();
         this._namedSignatures.add(signature);
-        await this.speakWithElevenLabs(`Name recorded as ${savedName}.`);
+        await this.playTTS(`Name recorded as ${savedName}.`, { dedupe: false });
         return;
       }
-      await this.speakWithElevenLabs("I could not save the name. Please try again.");
+      await this.playTTS("I could not save the name. Please try again.", { dedupe: false });
     } catch (err) {
       console.error("[Guide] name assignment failed:", err);
-      await this.speakWithElevenLabs("I could not save the name. Please try again.");
+      await this.playTTS("I could not save the name. Please try again.", { dedupe: false });
     }
   }
 
-  async speakWithElevenLabs(text) {
+  async playTTS(text, options = {}) {
     if (!text) return;
-
-    if (this._ttsProvider !== "elevenlabs") {
-      await this._speakViaBackend(text);
-      return;
-    }
-
-    const apiKey = this._elevenLabsApiKey || "";
-    const voiceId = this._elevenLabsVoiceId || "";
-    if (!apiKey || !voiceId) {
-      await this._speakViaBackend(text);
-      return;
-    }
-
+    const normalized = String(text).trim();
+    const dedupe = options?.dedupe !== false;
+    if (dedupe && normalized === this._lastPlayedTtsMessage) return;
     try {
-      const res = await fetch(
-        `https://api.elevenlabs.io/v1/text-to-speech/${encodeURIComponent(voiceId)}`,
-        {
-          method: "POST",
-          headers: {
-            "xi-api-key": apiKey,
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({
-            text,
-            model_id: "eleven_multilingual_v2",
-          }),
-        }
-      );
-      if (!res.ok) {
-        throw new Error(`ElevenLabs HTTP ${res.status}`);
-      }
-
-      const audioBlob = await res.blob();
-      const audioUrl = URL.createObjectURL(audioBlob);
-      const audio = new Audio(audioUrl);
-      audio.onended = () => URL.revokeObjectURL(audioUrl);
-      audio.onerror = () => URL.revokeObjectURL(audioUrl);
-      await audio.play();
-    } catch (err) {
-      console.error("[Guide] ElevenLabs speech failed:", err);
-      await this._speakViaBackend(text);
-    }
-  }
-
-  async _speakViaBackend(text) {
-    try {
-      const form = new URLSearchParams();
-      form.append("text", text);
-      const response = await fetch("/voice_response", {
+      const response = await fetch("/speak", {
         method: "POST",
-        body: form,
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ text: normalized }),
       });
       if (!response.ok) {
-        throw new Error(`Backend TTS HTTP ${response.status}`);
+        throw new Error(`Backend /speak HTTP ${response.status}`);
       }
       const blob = await response.blob();
       const url = URL.createObjectURL(blob);
+      if (this._activeAudio) {
+        try { this._activeAudio.pause(); } catch (_) {}
+      }
       const audio = new Audio(url);
+      this._activeAudio = audio;
       audio.onended = () => URL.revokeObjectURL(url);
       audio.onerror = () => URL.revokeObjectURL(url);
       await audio.play();
+      this._lastPlayedTtsMessage = normalized;
     } catch (err) {
-      console.error("[Guide] Backend ElevenLabs speech failed:", err);
-      this.speak(text);
+      console.error("[Guide] TTS playback failed:", err);
+      this.speak(normalized);
     }
   }
 
@@ -364,6 +325,10 @@ class GuideMode {
   }
 
   _silence() {
+    if (this._activeAudio) {
+      try { this._activeAudio.pause(); } catch (_) {}
+      this._activeAudio = null;
+    }
     window.speechSynthesis?.cancel();
   }
 }
