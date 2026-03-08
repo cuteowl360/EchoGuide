@@ -19,6 +19,9 @@ class GuideMode {
     this._busy     = false;          // prevent overlapping requests
     this._scanCount = 0;
     this._lastMessage = null;
+    this._lastSpokenObject = null;
+    this._elevenLabsApiKey = options.elevenLabsApiKey || window.ELEVENLABS_API_KEY || localStorage.getItem("ELEVENLABS_API_KEY") || "";
+    this._elevenLabsVoiceId = options.elevenLabsVoiceId || window.ELEVENLABS_VOICE_ID || localStorage.getItem("ELEVENLABS_VOICE_ID") || "";
 
     // Keep scan loop fast for responsive object updates.
     this.INTERVAL_MS    = Number(options.intervalMs) > 0 ? Number(options.intervalMs) : 300;
@@ -36,6 +39,7 @@ class GuideMode {
     this._active = true;
     this._scanCount = 0;
     this._lastMessage = null;
+    this._lastSpokenObject = null;
     console.log("[GuideSession] started");
     this._onStateChange(true);
     // First scan right away, then on interval
@@ -133,11 +137,60 @@ class GuideMode {
   }
 
   _handleSpeech(data) {
+    const objects = Array.isArray(data?.objects) ? data.objects : [];
+    const firstObject = typeof objects[0] === "string" ? objects[0].trim().toLowerCase() : "";
+    if (firstObject && firstObject !== this._lastSpokenObject) {
+      this.speakWithElevenLabs(`${firstObject} detected.`);
+      this._lastSpokenObject = firstObject;
+      return true;
+    }
+
     const message = data?.message || null;
     if (!message || message === this._lastMessage) return false;
-    this.speak(message);
+    this.speakWithElevenLabs(message);
     this._lastMessage = message;
     return true;
+  }
+
+  async speakWithElevenLabs(text) {
+    if (!text) return;
+
+    const apiKey = this._elevenLabsApiKey || "";
+    const voiceId = this._elevenLabsVoiceId || "";
+    if (!apiKey || !voiceId) {
+      this.speak(text);
+      return;
+    }
+
+    try {
+      const res = await fetch(
+        `https://api.elevenlabs.io/v1/text-to-speech/${encodeURIComponent(voiceId)}`,
+        {
+          method: "POST",
+          headers: {
+            "xi-api-key": apiKey,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            text,
+            model_id: "eleven_multilingual_v2",
+          }),
+        }
+      );
+      if (!res.ok) {
+        throw new Error(`ElevenLabs HTTP ${res.status}`);
+      }
+
+      const audioBlob = await res.blob();
+      const audioUrl = URL.createObjectURL(audioBlob);
+      const audio = new Audio(audioUrl);
+      audio.onended = () => URL.revokeObjectURL(audioUrl);
+      audio.onerror = () => URL.revokeObjectURL(audioUrl);
+      await audio.play();
+    } catch (err) {
+      console.error("[Guide] ElevenLabs speech failed:", err);
+      this.speak(text);
+    }
   }
 
   speak(text) {

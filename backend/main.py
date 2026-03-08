@@ -277,6 +277,18 @@ def _build_guide_message(
     return distance_m, direction, guidance, is_danger
 
 
+def _extract_guide_objects(detections: List[Dict[str, Any]]) -> List[str]:
+    objects: List[str] = []
+    seen: set[str] = set()
+    for item in detections:
+        label = str(item.get("label", "")).strip().lower()
+        if not label or label in seen:
+            continue
+        seen.add(label)
+        objects.append(label)
+    return objects
+
+
 @app.get("/health")
 async def health() -> Dict[str, Any]:
     """Return service availability."""
@@ -758,6 +770,10 @@ async def guide_scan(image: UploadFile = File(...)) -> Dict[str, Any]:
         )
 
     distance_m, direction, message, is_danger = _build_guide_message(frame, detections)
+    objects = _extract_guide_objects(detections)
+    response_message = message
+    if response_message is None and objects:
+        response_message = f"{objects[0].capitalize()} detected."
 
     logger.info(
         "[guide] scan end id=%s detections=%s danger=%s distance=%s direction=%s message=%s",
@@ -771,10 +787,11 @@ async def guide_scan(image: UploadFile = File(...)) -> Dict[str, Any]:
 
     return {
         "detections":  detections,
+        "objects":     objects,
         "distance":    distance_m,
         "direction":   direction,
-        "message":     message,
-        "guidance":    message,
+        "message":     response_message,
+        "guidance":    response_message,
         "is_danger":   is_danger,
         "detection_count": len(detections),
     }
