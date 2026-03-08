@@ -20,6 +20,9 @@ class GuideMode {
     this._scanCount = 0;
     this._lastMessage = null;
     this._lastSpokenObject = null;
+    this._ttsProvider = String(
+      options.ttsProvider || window.GUIDE_TTS_PROVIDER || localStorage.getItem("GUIDE_TTS_PROVIDER") || "polly"
+    ).toLowerCase();
     this._elevenLabsApiKey = options.elevenLabsApiKey || window.ELEVENLABS_API_KEY || localStorage.getItem("ELEVENLABS_API_KEY") || "";
     this._elevenLabsVoiceId = options.elevenLabsVoiceId || window.ELEVENLABS_VOICE_ID || localStorage.getItem("ELEVENLABS_VOICE_ID") || "EXAVITQu4vr4xnSDxMaLz";
     this._onAssignName = options.onAssignName || null; // async ({name, signature}) -> {ok, name}
@@ -281,6 +284,11 @@ class GuideMode {
 
   async speakWithElevenLabs(text) {
     if (!text) return;
+
+    if (this._ttsProvider !== "elevenlabs") {
+      await this._speakViaBackend(text);
+      return;
+    }
 
     const apiKey = this._elevenLabsApiKey || "";
     const voiceId = this._elevenLabsVoiceId || "";

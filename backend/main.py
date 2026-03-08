@@ -441,7 +441,7 @@ async def voice_response(text: str = Form(...)):
 
     audio_bytes = await asyncio.to_thread(synthesize_speech, spoken)
     if audio_bytes is None:
-        raise HTTPException(status_code=503, detail="TTS unavailable. Configure ELEVENLABS_API_KEY.")
+        raise HTTPException(status_code=503, detail="TTS unavailable. Configure TTS provider credentials.")
     if not audio_bytes:
         raise HTTPException(status_code=500, detail="No audio returned.")
 
