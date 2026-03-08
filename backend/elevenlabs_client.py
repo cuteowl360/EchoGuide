@@ -27,10 +27,16 @@ def _tts_provider() -> str:
     return (os.getenv("TTS_PROVIDER", DEFAULT_TTS_PROVIDER).strip().lower() or DEFAULT_TTS_PROVIDER)
 
 
+def _polly_enabled() -> bool:
+    return (os.getenv("POLLY_ENABLED", "false").strip().lower() in {"1", "true", "yes", "on"})
+
+
 def _load_polly_client():
     global _POLLY_CLIENT
     if _POLLY_CLIENT is not None:
         return _POLLY_CLIENT
+    if not _polly_enabled():
+        return None
     if boto3 is None:
         return None
     try:
@@ -48,10 +54,10 @@ def is_available() -> bool:
     """Return True if configured TTS provider can be used."""
     provider = _tts_provider()
     if provider == "polly":
-        return _load_polly_client() is not None
+        return _polly_enabled() and (_load_polly_client() is not None)
     if provider == "elevenlabs":
         return bool(os.getenv("ELEVENLABS_API_KEY"))
-    return (_load_polly_client() is not None) or bool(os.getenv("ELEVENLABS_API_KEY"))
+    return bool(os.getenv("ELEVENLABS_API_KEY")) or (_polly_enabled() and (_load_polly_client() is not None))
 
 
 def synthesize_speech(text: str, voice_id: Optional[str] = None) -> Optional[bytes]:
@@ -64,27 +70,31 @@ def synthesize_speech(text: str, voice_id: Optional[str] = None) -> Optional[byt
 
     provider = _tts_provider()
     logger.info("[tts-client] requested provider=%s chars=%s", provider, len(cleaned))
+    polly_enabled = _polly_enabled()
     if provider == "polly":
+        if not polly_enabled:
+            logger.warning("[tts-client] polly disabled by config, using elevenlabs")
+            return _synthesize_via_elevenlabs(cleaned, voice_id)
         audio = _synthesize_via_polly(cleaned)
         if audio is not None:
             return audio
         logger.warning("[tts-client] polly unavailable/failed, falling back to elevenlabs")
         return _synthesize_via_elevenlabs(cleaned, voice_id)
     if provider == "elevenlabs":
-        audio = _synthesize_via_elevenlabs(cleaned, voice_id)
-        if audio is not None:
-            return audio
-        logger.warning("[tts-client] elevenlabs unavailable/failed, falling back to polly")
-        return _synthesize_via_polly(cleaned)
+        return _synthesize_via_elevenlabs(cleaned, voice_id)
 
-    # auto/unknown: prefer Polly first, then ElevenLabs.
-    audio = _synthesize_via_polly(cleaned)
+    # auto/unknown: prefer ElevenLabs, optionally Polly if explicitly enabled.
+    audio = _synthesize_via_elevenlabs(cleaned, voice_id)
     if audio is not None:
         return audio
-    return _synthesize_via_elevenlabs(cleaned, voice_id)
+    if polly_enabled:
+        return _synthesize_via_polly(cleaned)
+    return None
 
 
 def _synthesize_via_polly(text: str) -> Optional[bytes]:
+    if not _polly_enabled():
+        return None
     client = _load_polly_client()
     if client is None:
         return None

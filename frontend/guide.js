@@ -22,6 +22,7 @@ class GuideMode {
     this._lastSpokenObject = null;
     this._lastPlayedTtsMessage = null;
     this._activeAudio = null;
+    this._ttsQueue = Promise.resolve();
     this._onAssignName = options.onAssignName || null; // async ({name, signature}) -> {ok, name}
     this._namedSignatures = new Set();
     this._lastNameAttemptAt = new Map();
@@ -147,6 +148,7 @@ class GuideMode {
   }
 
   _handleSpeech(data) {
+    if (this._nameFlowInProgress) return false;
     const objects = Array.isArray(data?.objects) ? data.objects : [];
     const firstObject = typeof objects[0] === "string" ? objects[0].trim().toLowerCase() : "";
     if (firstObject && firstObject !== this._lastSpokenObject) {
@@ -286,6 +288,15 @@ class GuideMode {
     const normalized = String(text).trim();
     const dedupe = options?.dedupe !== false;
     if (dedupe && normalized === this._lastPlayedTtsMessage) return;
+    this._ttsQueue = this._ttsQueue
+      .then(() => this._playTTSNow(normalized))
+      .catch((err) => {
+        console.error("[Guide] TTS queue error:", err);
+      });
+    return this._ttsQueue;
+  }
+
+  async _playTTSNow(normalized) {
     try {
       const response = await fetch("/speak", {
         method: "POST",
@@ -300,6 +311,7 @@ class GuideMode {
       if (this._activeAudio) {
         try { this._activeAudio.pause(); } catch (_) {}
       }
+      window.speechSynthesis?.cancel();
       const audio = new Audio(url);
       this._activeAudio = audio;
       audio.onended = () => URL.revokeObjectURL(url);
@@ -309,6 +321,7 @@ class GuideMode {
     } catch (err) {
       console.error("[Guide] TTS playback failed:", err);
       this.speak(normalized);
+      this._lastPlayedTtsMessage = normalized;
     }
   }
 

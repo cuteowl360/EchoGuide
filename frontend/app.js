@@ -610,7 +610,6 @@ function handleVoiceCommand(type, params) {
 
     case "start_guide":
       setStatus("Echo: starting Guide Mode…");
-      speakFallback("Guide Mode activated.");
       guideModeBtn.click();
       break;
 
