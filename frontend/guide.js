@@ -22,7 +22,9 @@ class GuideMode {
     this._lastSpokenObject = null;
     this._lastPlayedTtsMessage = null;
     this._activeAudio = null;
-    this._ttsQueue = Promise.resolve();
+    this._instructionInFlight = false;
+    this._pendingInstruction = null;
+    this._speechGapMs = 2000;
     this._onAssignName = options.onAssignName || null; // async ({name, signature}) -> {ok, name}
     this._namedSignatures = new Set();
     this._lastNameAttemptAt = new Map();
@@ -46,6 +48,8 @@ class GuideMode {
     this._lastMessage = null;
     this._lastSpokenObject = null;
     this._lastPlayedTtsMessage = null;
+    this._instructionInFlight = false;
+    this._pendingInstruction = null;
     this._namedSignatures.clear();
     this._lastNameAttemptAt.clear();
     this._nameFlowInProgress = false;
@@ -67,6 +71,8 @@ class GuideMode {
     this._silence();
     this._lastMessage = null;
     this._lastPlayedTtsMessage = null;
+    this._pendingInstruction = null;
+    this._instructionInFlight = false;
     this._onStateChange(false);
     console.log("[Guide] stopped");
   }
@@ -151,17 +157,18 @@ class GuideMode {
     if (this._nameFlowInProgress) return false;
     const objects = Array.isArray(data?.objects) ? data.objects : [];
     const firstObject = typeof objects[0] === "string" ? objects[0].trim().toLowerCase() : "";
-    if (firstObject && firstObject !== this._lastSpokenObject) {
-      void this.playTTS(`${firstObject} detected.`);
-      this._lastSpokenObject = firstObject;
+    const message = data?.message || null;
+    if (message && message !== this._lastMessage) {
+      this._lastMessage = message;
+      this._enqueueInstruction(message, 1);
       return true;
     }
-
-    const message = data?.message || null;
-    if (!message || message === this._lastMessage) return false;
-    void this.playTTS(message);
-    this._lastMessage = message;
-    return true;
+    if (firstObject && firstObject !== this._lastSpokenObject) {
+      this._lastSpokenObject = firstObject;
+      this._enqueueInstruction(`${firstObject} detected.`, 2);
+      return true;
+    }
+    return false;
   }
 
   _normalizeBBox(item) {
@@ -176,6 +183,9 @@ class GuideMode {
   }
 
   _signatureForDetection(item) {
+    if (item?.signature && typeof item.signature === "string") {
+      return item.signature;
+    }
     const label = String(item?.label || "").trim().toLowerCase();
     const bb = this._normalizeBBox(item);
     if (!label || !bb) return null;
@@ -191,6 +201,8 @@ class GuideMode {
   _pickUnnamedPersonDetection(detections) {
     for (const item of detections) {
       if (!this._isPersonLikeLabel(item?.label)) continue;
+      const centerOnly = item?.is_center_path;
+      if (centerOnly === false) continue;
       const signature = this._signatureForDetection(item);
       if (!signature) continue;
       if (this._namedSignatures.has(signature)) continue;
@@ -256,6 +268,8 @@ class GuideMode {
 
   async _runVoiceNamingFlow(signature) {
     this._lastNameAttemptAt.set(signature, Date.now());
+    this._pendingInstruction = null;
+    await this._waitUntilSpeechIdle();
     await this.playTTS("Please say the name of this person.", { dedupe: false });
 
     let spokenName = await this._listenForName(6000);
@@ -269,7 +283,7 @@ class GuideMode {
     }
 
     try {
-      const result = await this._onAssignName({ name: spokenName, signature });
+      const result = await this._onAssignName({ name: spokenName, signature, face_id: signature });
       if (result?.ok) {
         const savedName = String(result.name || spokenName).trim();
         this._namedSignatures.add(signature);
@@ -288,12 +302,8 @@ class GuideMode {
     const normalized = String(text).trim();
     const dedupe = options?.dedupe !== false;
     if (dedupe && normalized === this._lastPlayedTtsMessage) return;
-    this._ttsQueue = this._ttsQueue
-      .then(() => this._playTTSNow(normalized))
-      .catch((err) => {
-        console.error("[Guide] TTS queue error:", err);
-      });
-    return this._ttsQueue;
+    await this._playTTSNow(normalized);
+    await new Promise((resolve) => setTimeout(resolve, this._speechGapMs));
   }
 
   async _playTTSNow(normalized) {
@@ -314,15 +324,68 @@ class GuideMode {
       window.speechSynthesis?.cancel();
       const audio = new Audio(url);
       this._activeAudio = audio;
-      audio.onended = () => URL.revokeObjectURL(url);
-      audio.onerror = () => URL.revokeObjectURL(url);
-      await audio.play();
+      await new Promise((resolve, reject) => {
+        let settled = false;
+        const done = (ok) => {
+          if (settled) return;
+          settled = true;
+          URL.revokeObjectURL(url);
+          if (ok) resolve();
+          else reject(new Error("audio-playback-failed"));
+        };
+        audio.onended = () => done(true);
+        audio.onerror = () => done(false);
+        audio.play().catch(() => done(false));
+      });
       this._lastPlayedTtsMessage = normalized;
     } catch (err) {
       console.error("[Guide] TTS playback failed:", err);
       this.speak(normalized);
       this._lastPlayedTtsMessage = normalized;
     }
+  }
+
+  _enqueueInstruction(text, priority) {
+    if (!text || this._nameFlowInProgress) return;
+    if (this._instructionInFlight) {
+      if (!this._pendingInstruction || priority < this._pendingInstruction.priority) {
+        this._pendingInstruction = { text, priority };
+      } else if (priority === this._pendingInstruction.priority) {
+        this._pendingInstruction = { text, priority };
+      }
+      return;
+    }
+    this._instructionInFlight = true;
+    void this.playTTS(text)
+      .catch((err) => {
+        console.error("[Guide] instruction speech failed:", err);
+      })
+      .finally(() => {
+        this._instructionInFlight = false;
+        if (this._pendingInstruction && !this._nameFlowInProgress) {
+          const next = this._pendingInstruction;
+          this._pendingInstruction = null;
+          this._enqueueInstruction(next.text, next.priority);
+        }
+      });
+  }
+
+  _waitUntilSpeechIdle(timeoutMs = 4000) {
+    return new Promise((resolve) => {
+      const started = Date.now();
+      const tick = () => {
+        if (!this._instructionInFlight) {
+          resolve();
+          return;
+        }
+        if (Date.now() - started >= timeoutMs) {
+          resolve();
+          return;
+        }
+        setTimeout(tick, 100);
+      };
+      tick();
+    });
   }
 
   speak(text) {

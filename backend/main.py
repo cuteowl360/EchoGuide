@@ -200,9 +200,10 @@ def _select_primary_obstacle(detections: List[Dict[str, Any]]) -> Optional[Dict[
 
 
 def _build_guide_guidance(distance_m: float, direction: str) -> str:
+    dist_txt = f"{distance_m:.2f}"
     if distance_m >= GUIDE_MESSAGE_SWITCH_M:
-        return f"Obstacle ahead {distance_m} meters."
-    return f"Obstacle {distance_m} meters ahead. Move {direction}."
+        return f"Obstacle ahead {dist_txt} meters."
+    return f"Obstacle {dist_txt} meters ahead. Move {direction}."
 
 
 def _maybe_reset_guide_state_for_lost_obstacle() -> None:
@@ -215,28 +216,28 @@ def _maybe_reset_guide_state_for_lost_obstacle() -> None:
 def _build_guide_message(
     frame: np.ndarray,
     detections: List[Dict[str, Any]],
-) -> tuple[Optional[float], Optional[str], Optional[str], bool]:
+) -> tuple[Optional[float], Optional[str], Optional[str], bool, Optional[str], Optional[str]]:
     if not detections:
         _maybe_reset_guide_state_for_lost_obstacle()
-        return None, None, None, False
+        return None, None, None, False, None, None
 
     frame_width = int(frame.shape[1] or 0)
     primary = _select_primary_obstacle(detections)
     if not primary:
         _maybe_reset_guide_state_for_lost_obstacle()
-        return None, None, None, False
+        return None, None, None, False, None, None
 
     bbox = _normalize_bbox(primary)
     if not bbox:
         _maybe_reset_guide_state_for_lost_obstacle()
-        return None, None, None, False
+        return None, None, None, False, None, None
 
     x1, y1, x2, y2 = bbox
     bbox_width = x2 - x1
     distance_m = _estimate_distance(float(bbox_width))
     if distance_m is None:
         _maybe_reset_guide_state_for_lost_obstacle()
-        return None, None, None, False
+        return None, None, None, False, None, None
 
     center_x = (x1 + x2) / 2
     direction = _estimate_direction(center_x, frame_width)
@@ -271,10 +272,10 @@ def _build_guide_message(
 
     if guidance is None:
         _guide_mode_state["last_distance_m"] = distance_m
-        return distance_m, direction, None, is_danger
+        return distance_m, direction, None, is_danger, signature, obstacle_label
 
     _guide_mode_state["last_distance_m"] = distance_m
-    return distance_m, direction, guidance, is_danger
+    return distance_m, direction, guidance, is_danger, signature, obstacle_label
 
 
 def _extract_guide_objects(detections: List[Dict[str, Any]]) -> List[str]:
@@ -287,6 +288,35 @@ def _extract_guide_objects(detections: List[Dict[str, Any]]) -> List[str]:
         seen.add(label)
         objects.append(label)
     return objects
+
+
+def _attach_detection_signatures(detections: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    enriched: List[Dict[str, Any]] = []
+    for item in detections:
+        out = dict(item)
+        bbox = _normalize_bbox(out)
+        label = str(out.get("label", "object")).strip() or "object"
+        out["signature"] = _obstacle_signature(label, bbox) if bbox else None
+        enriched.append(out)
+    return enriched
+
+
+def _filter_center_path_detections(frame: np.ndarray, detections: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    frame_width = int(frame.shape[1] or 0)
+    if frame_width <= 0:
+        return []
+    left = frame_width * 0.33
+    right = frame_width * 0.66
+    selected: List[Dict[str, Any]] = []
+    for item in detections:
+        bbox = _normalize_bbox(item)
+        if not bbox:
+            continue
+        x1, _, x2, _ = bbox
+        center_x = (x1 + x2) / 2
+        if left <= center_x <= right:
+            selected.append(item)
+    return selected
 
 
 @app.get("/health")
@@ -507,7 +537,11 @@ async def read_text(image: UploadFile = File(...)) -> Dict[str, Any]:
 
 
 @app.post("/remember_person")
-async def remember_person(image: UploadFile = File(...), name: str = Form(...)) -> Dict[str, Any]:
+async def remember_person(
+    image: UploadFile = File(...),
+    name: str = Form(...),
+    face_id: Optional[str] = Form(None),
+) -> Dict[str, Any]:
     """Capture and store a face embedding for a person."""
     if not name or not name.strip():
         raise HTTPException(status_code=400, detail="Name is required.")
@@ -523,7 +557,13 @@ async def remember_person(image: UploadFile = File(...), name: str = Form(...)) 
 
     try:
         saved = await asyncio.to_thread(remember_person_from_frame, frame, name)
-        return {"status": "ok", "mode": "remember_person", "name": saved.get("name"), "text": saved.get("message", "Person stored.")}
+        return {
+            "status": "ok",
+            "mode": "remember_person",
+            "name": saved.get("name"),
+            "face_id": face_id,
+            "text": saved.get("message", "Person stored."),
+        }
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
     except RuntimeError as exc:
@@ -796,16 +836,30 @@ async def guide_scan(image: UploadFile = File(...)) -> Dict[str, Any]:
             max_objects=yolo_max,
         )
 
-    distance_m, direction, message, is_danger = _build_guide_message(frame, detections)
-    objects = _extract_guide_objects(detections)
+    detections_signed = _attach_detection_signatures(detections)
+    center_path_detections = _filter_center_path_detections(frame, detections_signed)
+    center_signatures = {
+        str(item.get("signature"))
+        for item in center_path_detections
+        if item.get("signature")
+    }
+    for item in detections_signed:
+        item["is_center_path"] = bool(item.get("signature") in center_signatures)
+    distance_m, direction, message, is_danger, target_signature, target_label = _build_guide_message(frame, center_path_detections)
+    objects = _extract_guide_objects(center_path_detections)
     response_message = message
-    if response_message is None and objects:
-        response_message = f"{objects[0].capitalize()} detected."
+    if response_message is None and objects and distance_m is not None:
+        if direction == "left":
+            response_message = f"{objects[0].capitalize()} {distance_m:.2f} meters ahead on your left."
+        elif direction == "right":
+            response_message = f"{objects[0].capitalize()} {distance_m:.2f} meters ahead on your right."
+        else:
+            response_message = f"{objects[0].capitalize()} {distance_m:.2f} meters ahead."
 
     logger.info(
         "[guide] scan end id=%s detections=%s danger=%s distance=%s direction=%s message=%s",
         request_id,
-        len(detections),
+        len(detections_signed),
         is_danger,
         distance_m,
         direction,
@@ -813,12 +867,15 @@ async def guide_scan(image: UploadFile = File(...)) -> Dict[str, Any]:
     )
 
     return {
-        "detections":  detections,
+        "detections":  detections_signed,
         "objects":     objects,
         "distance":    distance_m,
         "direction":   direction,
         "message":     response_message,
         "guidance":    response_message,
+        "face_id":     target_signature,
+        "target_signature": target_signature,
+        "target_label": target_label,
         "is_danger":   is_danger,
-        "detection_count": len(detections),
+        "detection_count": len(detections_signed),
     }
