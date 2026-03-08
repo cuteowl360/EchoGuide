@@ -282,6 +282,23 @@ async function handleIdentifyPerson() {
   await runAction("/identify_person", form);
 }
 
+async function assignGuideDetectedPersonName(name) {
+  if (!stream) {
+    throw new Error("Camera is not active.");
+  }
+  const normalized = String(name || "").trim();
+  if (!normalized) {
+    throw new Error("Name is required.");
+  }
+
+  const blob = await captureFrameBlob();
+  const form = new FormData();
+  form.append("image", blob, "person.jpg");
+  form.append("name", normalized);
+  const data = await callJsonEndpoint("/remember_person", form);
+  return { ok: true, name: data?.name || normalized, data };
+}
+
 async function startCamera() {
   if (stream) return;
 
@@ -425,6 +442,16 @@ const guideMode = new GuideMode(video, canvas, {
   guideAnnouncementIntervalMs: 2000,
   onDetections: (detections) => {
     renderObjects(detections || []);
+  },
+  onAssignName: async ({ name }) => {
+    try {
+      setStatus(`Saving name as ${name}...`, "working");
+      return await assignGuideDetectedPersonName(name);
+    } catch (err) {
+      console.error("[Guide] auto-name save failed:", err);
+      setStatus(err?.message || "Could not save detected name.", "error");
+      return { ok: false, error: err?.message || "save-failed" };
+    }
   },
   onGuidance: (text, isDanger) => {
     guideGuidanceEl.textContent = text;

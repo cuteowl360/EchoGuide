@@ -22,6 +22,10 @@ class GuideMode {
     this._lastSpokenObject = null;
     this._elevenLabsApiKey = options.elevenLabsApiKey || window.ELEVENLABS_API_KEY || localStorage.getItem("ELEVENLABS_API_KEY") || "";
     this._elevenLabsVoiceId = options.elevenLabsVoiceId || window.ELEVENLABS_VOICE_ID || localStorage.getItem("ELEVENLABS_VOICE_ID") || "EXAVITQu4vr4xnSDxMaLz";
+    this._onAssignName = options.onAssignName || null; // async ({name, signature}) -> {ok, name}
+    this._namedSignatures = new Set();
+    this._lastNameAttemptAt = new Map();
+    this._nameFlowInProgress = false;
 
     // Keep scan loop fast for responsive object updates.
     this.INTERVAL_MS    = Number(options.intervalMs) > 0 ? Number(options.intervalMs) : 300;
@@ -40,6 +44,9 @@ class GuideMode {
     this._scanCount = 0;
     this._lastMessage = null;
     this._lastSpokenObject = null;
+    this._namedSignatures.clear();
+    this._lastNameAttemptAt.clear();
+    this._nameFlowInProgress = false;
     console.log("[GuideSession] started");
     this._onStateChange(true);
     // First scan right away, then on interval
@@ -126,6 +133,7 @@ class GuideMode {
   _processGuideResponse(data) {
     const detections = Array.isArray(data?.detections) ? data.detections : [];
     this._onDetections(detections);
+    this._maybeTriggerVoiceNaming(detections);
 
     const message = data?.message || null;
     const direction = data?.direction || null;
@@ -150,6 +158,125 @@ class GuideMode {
     this.speakWithElevenLabs(message);
     this._lastMessage = message;
     return true;
+  }
+
+  _normalizeBBox(item) {
+    const bb = item?.bbox;
+    if (!bb || typeof bb !== "object") return null;
+    const x1 = Number(bb.x1);
+    const y1 = Number(bb.y1);
+    const x2 = Number(bb.x2);
+    const y2 = Number(bb.y2);
+    if (![x1, y1, x2, y2].every(Number.isFinite)) return null;
+    return { x1, y1, x2, y2 };
+  }
+
+  _signatureForDetection(item) {
+    const label = String(item?.label || "").trim().toLowerCase();
+    const bb = this._normalizeBBox(item);
+    if (!label || !bb) return null;
+    const round = (v) => Math.round(v / 10) * 10;
+    return `${label}|${round(bb.x1)}:${round(bb.y1)}:${round(bb.x2)}:${round(bb.y2)}`;
+  }
+
+  _isPersonLikeLabel(label) {
+    const v = String(label || "").trim().toLowerCase();
+    return v === "person" || v === "human" || v === "man" || v === "woman";
+  }
+
+  _pickUnnamedPersonDetection(detections) {
+    for (const item of detections) {
+      if (!this._isPersonLikeLabel(item?.label)) continue;
+      const signature = this._signatureForDetection(item);
+      if (!signature) continue;
+      if (this._namedSignatures.has(signature)) continue;
+      const lastAttemptAt = Number(this._lastNameAttemptAt.get(signature) || 0);
+      if (Date.now() - lastAttemptAt < 12000) continue;
+      return { item, signature };
+    }
+    return null;
+  }
+
+  _maybeTriggerVoiceNaming(detections) {
+    if (!Array.isArray(detections) || !detections.length) return;
+    if (!this._active || this._nameFlowInProgress) return;
+    if (typeof this._onAssignName !== "function") return;
+
+    const candidate = this._pickUnnamedPersonDetection(detections);
+    if (!candidate) return;
+    this._nameFlowInProgress = true;
+    void this._runVoiceNamingFlow(candidate.signature).finally(() => {
+      this._nameFlowInProgress = false;
+    });
+  }
+
+  _listenForName(timeoutMs = 6000) {
+    return new Promise((resolve) => {
+      const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+      if (!SR) {
+        resolve(null);
+        return;
+      }
+
+      let settled = false;
+      const rec = new SR();
+      rec.lang = "en-US";
+      rec.continuous = false;
+      rec.interimResults = false;
+      rec.maxAlternatives = 1;
+
+      const done = (value) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        try { rec.stop(); } catch (_) {}
+        resolve(value);
+      };
+
+      rec.onresult = (ev) => {
+        const raw = ev?.results?.[0]?.[0]?.transcript || "";
+        const cleaned = String(raw).replace(/[^\w\s'-]/g, "").trim();
+        done(cleaned || null);
+      };
+      rec.onerror = () => done(null);
+      rec.onend = () => done(null);
+
+      const timer = setTimeout(() => done(null), timeoutMs);
+      try {
+        rec.start();
+      } catch (_) {
+        done(null);
+      }
+    });
+  }
+
+  async _runVoiceNamingFlow(signature) {
+    this._lastNameAttemptAt.set(signature, Date.now());
+    await this.speakWithElevenLabs("Please say the name of this person.");
+
+    let spokenName = await this._listenForName(6000);
+    if (!spokenName) {
+      await this.speakWithElevenLabs("I did not catch the name. Please say it again.");
+      spokenName = await this._listenForName(6000);
+    }
+    if (!spokenName) {
+      await this.speakWithElevenLabs("Name capture failed. You can retry or use the remember button.");
+      return;
+    }
+
+    try {
+      const result = await this._onAssignName({ name: spokenName, signature });
+      if (result?.ok) {
+        const savedName = String(result.name || spokenName).trim();
+        this._namedSignatures.add(signature);
+        await this.speakWithElevenLabs(`Name recorded as ${savedName}.`);
+        return;
+      }
+      await this.speakWithElevenLabs("I could not save the name. Please try again.");
+    } catch (err) {
+      console.error("[Guide] name assignment failed:", err);
+      await this.speakWithElevenLabs("I could not save the name. Please try again.");
+    }
   }
 
   async speakWithElevenLabs(text) {
