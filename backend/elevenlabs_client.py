@@ -17,7 +17,7 @@ logger = logging.getLogger(__name__)
 
 DEFAULT_VOICE_ID = "EXAVITQu4vr4xnSDxMaLz"
 ELEVENLABS_URL = "https://api.elevenlabs.io/v1/text-to-speech/{voice_id}"
-DEFAULT_TTS_PROVIDER = "polly"
+DEFAULT_TTS_PROVIDER = "elevenlabs"
 DEFAULT_POLLY_VOICE_ID = "Joanna"
 
 _POLLY_CLIENT = None

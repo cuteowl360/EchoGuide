@@ -23,7 +23,7 @@ Required:
 
 Optional:
 - `GEMINI_API_KEY` (Google Gemini / Gemini API)
-- `TTS_PROVIDER` (`polly` or `elevenlabs`, default: `polly`)
+- `TTS_PROVIDER` (`elevenlabs` or `polly`, default: `elevenlabs`)
 - Polly settings when using `polly`: `POLLY_REGION`, `POLLY_VOICE_ID`, `POLLY_ENGINE`
 - ElevenLabs settings when using `elevenlabs`: `ELEVENLABS_API_KEY`, `ELEVENLABS_VOICE_ID`
 
